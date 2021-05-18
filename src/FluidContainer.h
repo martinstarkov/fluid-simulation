@@ -117,8 +117,7 @@ public:
     }
 
     // Solve linear differential equation of density / velocity.
-    static void LinearSolve(int b, std::vector<float>& x, std::vector<float>& x0, float a, float c, std::size_t iterations, std::size_t N) {
-        float c_reciprocal{ 1.0f / c };
+    static void LinearSolve(int b, std::vector<float>& x, std::vector<float>& x0, float a, float c_reciprocal, std::size_t iterations, std::size_t N) {
         for (std::size_t iteration{ 0 }; iteration < iterations; ++iteration) {
             for (std::size_t j{ 1 }; j < N - 1; ++j) {
                 for (std::size_t i{ 1 }; i < N - 1; ++i) {
@@ -142,7 +141,8 @@ public:
     // Diffuse density / velocity outward at each step.
     static void Diffuse(int b, std::vector<float>& x, std::vector<float>& x0, float diffusion, float dt, std::size_t iterations, std::size_t N) {
         float a{ dt * diffusion * (N - 2) * (N - 2) };
-        LinearSolve(b, x, x0, a, 1 + 6 * a, iterations, N);
+        float c_reciprocal{ 1 / (1 + 6 * a) };
+        LinearSolve(b, x, x0, a, c_reciprocal, iterations, N);
     }
 
     // Converse 'mass' of density / velocity fields.
@@ -162,8 +162,8 @@ public:
 
         SetBoundaryConditions(0, div, N);
         SetBoundaryConditions(0, p, N);
-
-        LinearSolve(0, p, div, 1, 6, iterations, N);
+        float c{ 6.0f };
+        LinearSolve(0, p, div, 1.0f, 1.0f / c, iterations, N);
 
         for (std::size_t j{ 1 }; j < N - 1; ++j) {
             for (std::size_t i{ 1 }; i < N - 1; ++i) {
