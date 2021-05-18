@@ -238,6 +238,31 @@ public:
 
     void Update() {
 
+        /*Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
+            Diffuse(1, px_a, x_a, viscosity, dt, 4, size);
+        }, x_b, px_b, y_b, py_b);
+        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
+            Diffuse(2, py_a, y_a, viscosity, dt, 4, size);
+        }, x_b, px_b, y_b, py_b);
+        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
+            Project(px_a, py_a, x_a, y_a, 4, size);
+        }, x_b, px_b, y_b, py_b);
+        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
+            Advect(1, x_a, px_a, px_a, py_a, dt, size, cgh);
+        }, x_b, px_b, y_b, py_b);
+        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
+            Advect(2, y_a, py_a, px_a, py_a, dt, size, cgh);
+        }, x_b, px_b, y_b, py_b);
+        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
+            Project(x_a, y_a, px_a, py_a, 4, size);
+        }, x_b, px_b, y_b, py_b);
+        Submit(queue, [&](cl::sycl::handler& cgh, auto density_a, auto previous_density_a) {
+            Diffuse(0, previous_density_a, density_a, diffusion, dt, 4, size);
+        }, density_b, previous_density_b);
+        Submit(queue, [&](cl::sycl::handler& cgh, auto density_a, auto previous_density_a, auto x_a, auto y_a) {
+            Advect(0, density_a, previous_density_a, x_a, y_a, dt, size, cgh);
+        }, density_b, previous_density_b, x_b, y_b);*/
+
         // queue.submit([&](cl::sycl::handler& cgh) {
         //     auto x_a = x_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
         //     auto px_a = px_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
@@ -251,12 +276,6 @@ public:
         //         Diffuse(2, py_a, y_a, viscosity, dt, 4, size);
         //     });
         // });
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
-            Diffuse(1, px_a, x_a, viscosity, dt, 4, size);
-        }, x_b, px_b, y_b, py_b);
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
-            Diffuse(2, py_a, y_a, viscosity, dt, 4, size);
-        }, x_b, px_b, y_b, py_b);
         // queue.submit([&](cl::sycl::handler& cgh) {
         //     auto x_a = x_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
         //     auto px_a = px_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
@@ -267,9 +286,6 @@ public:
         //         Project(px_a, py_a, x_a, y_a, 4, size);
         //     });
         // });
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
-            Project(px_a, py_a, x_a, y_a, 4, size);
-        }, x_b, px_b, y_b, py_b);
         // queue.submit([&](cl::sycl::handler& cgh) {
         //     auto x_a = x_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
         //     auto px_a = px_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
@@ -278,12 +294,6 @@ public:
         //     Advect(1, x_a, px_a, px_a, py_a, dt, size, cgh);
         //     Advect(2, y_a, py_a, px_a, py_a, dt, size, cgh);
         // });
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
-            Advect(1, x_a, px_a, px_a, py_a, dt, size, cgh);
-        }, x_b, px_b, y_b, py_b);
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
-            Advect(2, y_a, py_a, px_a, py_a, dt, size, cgh);
-        }, x_b, px_b, y_b, py_b);
         // queue.submit([&](cl::sycl::handler& cgh) {
         //     auto x_a = x_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
         //     auto px_a = px_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
@@ -294,9 +304,6 @@ public:
         //         Project(x_a, y_a, px_a, py_a, 4, size);
         //     });
         // });
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
-            Project(x_a, y_a, px_a, py_a, 4, size);
-        }, x_b, px_b, y_b, py_b);
         // queue.submit([&](cl::sycl::handler& cgh) {
         //     auto density_a = density_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
         //     auto previous_density_a = previous_density_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
@@ -307,10 +314,6 @@ public:
         //         Diffuse(0, previous_density_a, density_a, diffusion, dt, 4, size);
         //     });
         // });
-        
-        Submit(queue, [&](cl::sycl::handler& cgh, auto density_a, auto previous_density_a) {
-            Diffuse(0, previous_density_a, density_a, diffusion, dt, 4, size);
-        }, density_b, previous_density_b);
         // queue.submit([&](cl::sycl::handler& cgh) {
         //     auto density_a = density_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
         //     auto previous_density_a = previous_density_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
@@ -318,9 +321,7 @@ public:
         //     auto y_a = y_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
         //     Advect(0, density_a, previous_density_a, x_a, y_a, dt, size, cgh);
         // });
-        Submit(queue, [&](cl::sycl::handler& cgh, auto density_a, auto previous_density_a, auto x_a, auto y_a) {
-            Advect(0, density_a, previous_density_a, x_a, y_a, dt, size, cgh);
-        }, density_b, previous_density_b, x_b, y_b);
+        
     }
 
     template <typename T>
@@ -343,9 +344,7 @@ private:
     }
 };
 
-using namespace engine;
-
-class FluidSimulation : public Engine {
+class FluidSimulation : public engine::Engine {
 public:
 
     const int SCALE{ 10 };
@@ -358,30 +357,30 @@ public:
     engine::Texture texture;
 
     void Init() {
-        texture = { Engine::GetDisplay().second, { fluid.size, fluid.size }, PixelFormat::BGRA8888, TextureAccess::STREAMING };
+        texture = { Engine::GetDisplay().second, { fluid.size, fluid.size }, engine::PixelFormat::BGRA8888, engine::TextureAccess::STREAMING };
     }
 
     void Update() {
         // Reset the screen.
-        if (engine::InputHandler::KeyDown(Key::SPACE)) {
+        if (engine::InputHandler::KeyDown(engine::Key::SPACE)) {
             fluid.Reset();
         }
         // Reset gravity.
-        if (engine::InputHandler::KeyDown(Key::R)) {
+        if (engine::InputHandler::KeyDown(engine::Key::R)) {
             gravity = {};
         }
         // Increment gravity.
-        if (engine::InputHandler::KeyDown(Key::DOWN)) {
+        if (engine::InputHandler::KeyDown(engine::Key::DOWN)) {
             gravity.y += gravity_increment;
-        } else if (engine::InputHandler::KeyDown(Key::UP)) {
+        } else if (engine::InputHandler::KeyDown(engine::Key::UP)) {
             gravity.y -= gravity_increment;
-        } else if (engine::InputHandler::KeyDown(Key::LEFT)) {
+        } else if (engine::InputHandler::KeyDown(engine::Key::LEFT)) {
             gravity.x -= gravity_increment;
-        } else if (engine::InputHandler::KeyDown(Key::RIGHT)) {
+        } else if (engine::InputHandler::KeyDown(engine::Key::RIGHT)) {
             gravity.x += gravity_increment;
         }
         // Add fluid.
-        if (engine::InputHandler::MousePressed(MouseButton::LEFT)) {
+        if (engine::InputHandler::MousePressed(engine::Mouse::LEFT)) {
             // Add dye.
             auto mouse_position{ engine::InputHandler::GetMousePosition() };
             fluid.AddDensity(mouse_position.x / SCALE, mouse_position.y / SCALE, 1000, 10 / SCALE);
@@ -398,7 +397,7 @@ public:
 
     void Render() {
         static bool density_graph{ false };
-        if (engine::InputHandler::KeyDown(Key::D)) {
+        if (engine::InputHandler::KeyDown(engine::Key::D)) {
             density_graph = !density_graph;
         }
         int pitch;
@@ -428,14 +427,14 @@ public:
         }
         texture.Unlock();
 
-        Renderer::DrawTexture(texture, {}, { fluid.size * SCALE, fluid.size * SCALE });
+        engine::Renderer::DrawTexture(texture, {}, { fluid.size * SCALE, fluid.size * SCALE });
     }
 
 };
 
 int main(int c, char** v) {
 
-	Engine::Start<FluidSimulation>("Fluid Simulation", { 600, 600 }, 6000);
+    engine::Engine::Start<FluidSimulation>("Fluid Simulation", { 600, 600 }, 60);
 
 	return 0;
 }

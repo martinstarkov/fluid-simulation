@@ -217,7 +217,7 @@ public:
 private:
     // Clamp value to a range.
     template <typename T>
-    inline T Clamp(T value, T low, T high) {
+    static T Clamp(T value, T low, T high) {
         return value >= high ? high : value <= low ? low : value;
     }
 };
