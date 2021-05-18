@@ -1,5 +1,5 @@
-#include <vector>
-#include <algorithm>
+#include <vector> // std::vector
+#include <algorithm> // std::fill
 #include <cstdlib> // std::size_t
 #include <cstdint> // std::uint32_t, etc
 
@@ -8,6 +8,7 @@
 #include <CL/sycl.hpp>
 #include <protegon.h>
 
+// Kernel declarations.
 class fluid_linear_solve;
 class fluid_add_velocity;
 class fluid_project1;
@@ -51,8 +52,13 @@ public:
 
     SYCLFluidContainer(std::size_t size, float dt, float diffusion, float viscosity) :
         size{ size }, dt{ dt }, diffusion{ diffusion }, viscosity{ viscosity } {
-       
-        InitData();
+        auto s{ size * size };
+        px.resize(s);
+        py.resize(s);
+        x.resize(s);
+        y.resize(s);
+        previous_density.resize(s);
+        density.resize(s);
         cl::sycl::property_list props{ cl::sycl::property::buffer::use_host_ptr() };
         x_b = { x.data(), x.size(), props };
         y_b = { y.data(), y.size(), props };
@@ -63,25 +69,14 @@ public:
     }
     ~SYCLFluidContainer() = default;
 
-    void InitData() {
-         auto s{ size * size };
-        px.resize(s);
-        py.resize(s);
-        x.resize(s);
-        y.resize(s);
-        previous_density.resize(s);
-        density.resize(s);
+    // Reset fluid to empty.
+    void Reset() {
         std::fill(px.begin(), px.end(), 0.0f);
         std::fill(py.begin(), py.end(), 0.0f);
         std::fill(x.begin(), x.end(), 0.0f);
         std::fill(y.begin(), y.end(), 0.0f);
         std::fill(previous_density.begin(), previous_density.end(), 0.0f);
         std::fill(density.begin(), density.end(), 0.0f);
-    }
-
-    // Reset fluid to empty.
-    void Reset() {
-        InitData();
     }
 
     // Fade density over time.
@@ -92,7 +87,7 @@ public:
     }
 
     // Get clamped index based off of coordinates.
-    static inline std::size_t IX(std::size_t x, std::size_t y, std::size_t N) {
+    static std::size_t IX(std::size_t x, std::size_t y, std::size_t N) {
         // Clamp coordinates.
         if (x < 0) { x = 0; }
         if (x > N - 1) { x = N - 1; }
@@ -126,7 +121,7 @@ public:
         this->y[index] += py;
     }
  
-    // SYCL Variables
+    // SYCL Code
 
     cl::sycl::queue queue{ cl::sycl::host_selector{}, exception_handler };
 
@@ -138,7 +133,7 @@ public:
     cl::sycl::buffer<float, 1> density_b;
 
     // Set boundaries to opposite of adjacent layer.
-    static inline void SetBnd(int b, read_write_accessor x, std::size_t N) {
+    static void SetBoundaryConditions(int b, read_write_accessor x, std::size_t N) {
         for (std::size_t i{ 1 }; i < N - 1; ++i) {
             auto top{ IX(i, 1, N) };
             auto bottom{ IX(i, N - 2, N) };
@@ -161,83 +156,84 @@ public:
     }
 
     // Solve linear differential equation of density / velocity.
-    static inline void LinSolve(int b, read_write_accessor x, read_write_accessor x0, float a, float c, int iter, int N) {
-        float cRecip = 1.0f / c;
+    static void LinearSolve(int b, read_write_accessor x, read_write_accessor x0, float a, float c, int iter, int N) {
+        float c_reciprocal{ 1.0f / c };
         
         for (int k = 0; k < iter; k++) {
-                for (int j = 1; j < N - 1; j++) {
-                    for (int i = 1; i < N - 1; i++) {
-                        x[IX(i, j, N)] = (x0[IX(i, j, N)] + a
-                                            * (x[IX(i + 1, j, N)]
-                                                + x[IX(i - 1, j, N)]
-                                                + x[IX(i, j + 1, N)]
-                                                + x[IX(i, j - 1, N)]
-                                                + x[IX(i, j, N)]
-                                                + x[IX(i, j, N)]
-                                                )) * cRecip;
-                    }
+            for (int j = 1; j < N - 1; j++) {
+                for (int i = 1; i < N - 1; i++) {
+                    x[IX(i, j, N)] = (x0[IX(i, j, N)] + a
+                                        * (x[IX(i + 1, j, N)]
+                                            + x[IX(i - 1, j, N)]
+                                            + x[IX(i, j + 1, N)]
+                                            + x[IX(i, j - 1, N)]
+                                            + x[IX(i, j, N)]
+                                            + x[IX(i, j, N)]
+                                            )) * c_reciprocal;
                 }
-            SetBnd(b, x, N);
+            }
+            SetBoundaryConditions(b, x, N);
         }
             
     }
 
     // Diffuse density / velocity outward at each step.
-    static inline void Diffuse(int b, read_write_accessor x, read_write_accessor x0, float diff, float dt, int iter, int N) {
+    static void Diffuse(int b, read_write_accessor x, read_write_accessor x0, float diff, float dt, int iter, int N) {
         float a = dt * diff * (N - 2) * (N - 2);
-        LinSolve(b, x, x0, a, 1 + 6 * a, iter, N);
+        LinearSolve(b, x, x0, a, 1 + 6 * a, iter, N);
     }
 
     // Converse 'mass' of density / velocity fields.
-    static inline void Project(read_write_accessor vx, read_write_accessor vy, read_write_accessor p, read_write_accessor div, int iter, int N) {
-            for (int j = 1; j < N - 1; j++) {
-                for (int i = 1; i < N - 1; i++) {
-                    div[IX(i, j, N)] = -0.5f * (
-                        vx[IX(i + 1, j, N)]
-                        - vx[IX(i - 1, j, N)]
-                        + vy[IX(i, j + 1, N)]
-                        - vy[IX(i, j - 1, N)]
-                        ) / N;
-                    p[IX(i, j, N)] = 0;
-                }
+    static void Project(read_write_accessor vx, read_write_accessor vy, read_write_accessor p, read_write_accessor div, int iter, int N) {
+        for (int j = 1; j < N - 1; j++) {
+            for (int i = 1; i < N - 1; i++) {
+                div[IX(i, j, N)] = -0.5f * (
+                    vx[IX(i + 1, j, N)]
+                    - vx[IX(i - 1, j, N)]
+                    + vy[IX(i, j + 1, N)]
+                    - vy[IX(i, j - 1, N)]
+                    ) / N;
+                p[IX(i, j, N)] = 0;
             }
-        SetBnd(0, div, N);
-        SetBnd(0, p, N);
+        }
+        SetBoundaryConditions(0, div, N);
+        SetBoundaryConditions(0, p, N);
 
-        LinSolve(0, p, div, 1, 6, iter, N);
+        LinearSolve(0, p, div, 1, 6, iter, N);
 
-            for (int j = 1; j < N - 1; j++) {
-                for (int i = 1; i < N - 1; i++) {
-                    vx[IX(i, j, N)] -= 0.5f * (p[IX(i + 1, j, N)] - p[IX(i - 1, j, N)]) * N;
-                    vy[IX(i, j, N)] -= 0.5f * (p[IX(i, j + 1, N)] - p[IX(i, j - 1, N)]) * N;
-                }
+        for (int j = 1; j < N - 1; j++) {
+            for (int i = 1; i < N - 1; i++) {
+                vx[IX(i, j, N)] -= 0.5f * (p[IX(i + 1, j, N)] - p[IX(i - 1, j, N)]) * N;
+                vy[IX(i, j, N)] -= 0.5f * (p[IX(i, j + 1, N)] - p[IX(i, j - 1, N)]) * N;
             }
-        SetBnd(1, vx, N);
-        SetBnd(2, vy, N);
+        }
+        SetBoundaryConditions(1, vx, N);
+        SetBoundaryConditions(2, vy, N);
     }
 
     // Move density / velocity within the field to the next step.
-    static inline void Advect(int b, read_write_accessor d, read_write_accessor d0, read_write_accessor u, read_write_accessor v, float dt, int N, cl::sycl::handler& cgh) {
+    static void Advect(int b, read_write_accessor d, read_write_accessor d0, read_write_accessor u, read_write_accessor v, float dt, int N, cl::sycl::handler& cgh) {
         float dt0{ dt * N };
         cgh.parallel_for<fluid_advect>(cl::sycl::range<2>(N, N), [=](cl::sycl::item<2> item) {
             auto i{ 1 + item.get_id(0) };
             auto j{ 1 + item.get_id(1) };
-            float x{ i - dt0 * u[IX(i, j, N)] }; 
-            float y{ j - dt0 * v[IX(i, j, N)] };
-            x = x >= N + 0.5f ? N + 0.5f : x <= 0.5f ? 0.5f : x;
-            auto i0{ (int)x }; 
-            auto i1{ i0 + 1 };
-            y = y >= N + 0.5f ? N + 0.5f : y <= 0.5f ? 0.5f : y;
-            auto j0{ (int)y };
-            auto j1{ j0 + 1 };
+            auto index{ IX(i, j, N) };
+            float x{ i - dt0 * u[index] };
+            float y{ j - dt0 * v[index] };
+            x = Clamp(x, 0.5f, N + 0.5f);
+            auto i0 = (int)x;
+            auto i1 = i0 + 1;
+            y = Clamp(y, 0.5f, N + 0.5f);
+            auto j0 = (int)y;
+            auto j1 = j0 + 1;
             float s1{ x - i0 };
             float s0{ 1 - s1 };
             float t1{ y - j0 };
             float t0{ 1 - t1 };
-            d[IX(i, j, N)] = s0 * (t0 * d0[IX(i0, j0, N)] + t1 * d0[IX(i0, j1, N)]) +
+            d[index] = s0 * (t0 * d0[IX(i0, j0, N)] + t1 * d0[IX(i0, j1, N)]) +
                 s1 * (t0 * d0[IX(i1, j0, N)] + t1 * d0[IX(i1, j1, N)]);
         });
-        SetBnd(b, d, N);
+        SetBoundaryConditions(b, d, N);
     }
 
     void Update() {
@@ -342,7 +338,7 @@ public:
 private:
     // Clamp value to a range.
     template <typename T>
-    static inline T Clamp(T value, T low, T high) {
+    static T Clamp(T value, T low, T high) {
         return value >= high ? high : value <= low ? low : value;
     }
 };
