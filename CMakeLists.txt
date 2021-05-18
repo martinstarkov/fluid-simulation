@@ -8,8 +8,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 set(SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
-set(CPP_FILES 
-"${SRC_DIR}/Application.cpp")
+set(SRC_FILES
+"${SRC_DIR}/Application.cpp"
+"${SRC_DIR}/FluidContainer.h")
 
 # Add include directories to project.
 
@@ -17,12 +18,11 @@ include_directories(
     ${SRC_DIR}
 )
 
-
 # Create executable from all source files.
 
 add_executable(
     ${PROJECT_NAME}
-    ${CPP_FILES}
+    ${SRC_FILES}
 )
 
 add_subdirectory("vendor/protegon")
@@ -41,12 +41,11 @@ if (NOT ComputeCpp_DIR)
   "ComputeCpp_DIR=<path/to/install/root>.")
 endif()
 
-#include("${CMAKE_SOURCE_DIR}/cmake/ComputeCppCompilerChecks.cmake")
-find_package(ComputeCpp REQUIRED)
-
 set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 
+find_package(ComputeCpp REQUIRED)
+
 add_sycl_to_target(
-TARGET ${PROJECT_NAME}
-SOURCES ${CPP_FILES}
+  TARGET ${PROJECT_NAME}
+  SOURCES ${CPP_FILES}
 )
