@@ -452,12 +452,13 @@ private:
 class FluidSimulation : public engine::Engine {
 public:
 
-    const int SCALE{ 8 };
-    SYCLFluidContainer fluid{ 75, 0.1f, 0.0001f, 0.000001f }; // Dt, Diffusion, Viscosity
+    const int SCALE{ 2 };
+    SYCLFluidContainer fluid{ 300, 0.1f, 0.0001f, 0.000001f }; // Dt, Diffusion, Viscosity
 
     V2_float gravity; // Initial gravity
 
     float gravity_increment{ 1.0f }; // Increment by which gravity increases / decreases
+    int radius{ 4 };
 
     engine::Texture texture;
 
@@ -488,7 +489,7 @@ public:
         if (engine::InputHandler::MousePressed(engine::Mouse::LEFT)) {
             // Add dye.
             auto mouse_position{ engine::InputHandler::GetMousePosition() };
-            fluid.AddDensity(mouse_position.x / SCALE, mouse_position.y / SCALE, 1000, 10 / SCALE);
+            fluid.AddDensity(mouse_position.x / SCALE, mouse_position.y / SCALE, 1000, radius);
             // Add gravity vector.
             fluid.AddVelocity(mouse_position.x / SCALE, mouse_position.y / SCALE, gravity.x, gravity.y);
         }
