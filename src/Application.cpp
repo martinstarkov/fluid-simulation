@@ -16,8 +16,7 @@ class fluid_project2;
 class fluid_project3;
 class fluid_project4;
 class fluid_project5;
-class fluid_advect1;
-class fluid_advect2;
+class fluid_advect;
 class fluid_whole;
 template <std::size_t SIZE>
 class fluid_kernel;
@@ -42,12 +41,18 @@ public:
     // Member variables.
 
     std::size_t size{ 0 };
+    std::size_t velocity_iterations{ 4 };
+    std::size_t density_iterations{ 4 };
 
     float dt{ 0.0f };
     float diffusion{ 0.0f };
     float viscosity{ 0.0f };
-    float a{ 0.0f };
-    float c_reciprocal{ 0.0f };
+    float a_velocity{ 0.0f };
+    float a_density{ 0.0f };
+    float c_reciprocal_velocity{ 0.0f };
+    float c_reciprocal_density{ 0.0f };
+    float c_reciprocal_project{ 1.0f / 6.0f };
+    float dt0{ 0.0f };
 
     std::vector<float> px;
     std::vector<float> py;
@@ -59,8 +64,11 @@ public:
     SYCLFluidContainer(std::size_t size, float dt, float diffusion, float viscosity) :
         size{ size }, dt{ dt }, diffusion{ diffusion }, viscosity{ viscosity } {
         auto s{ size * size };
-        a = dt * diffusion * (size - 2) * (size - 2);
-        c_reciprocal = 1 + 6 * a;
+        a_velocity = dt * viscosity * (size - 2) * (size - 2);
+        c_reciprocal_velocity = 1.0f / (1.0f + 6.0f * a_velocity);
+        a_density = dt * diffusion * (size - 2) * (size - 2);
+        c_reciprocal_density = 1.0f / (1.0f + 6.0f * a_density);
+        dt0 = dt * size;
         px.resize(s);
         py.resize(s);
         x.resize(s);
@@ -141,7 +149,7 @@ public:
     cl::sycl::buffer<float, 1> density_b;
 
     // Set boundaries to opposite of adjacent layer.
-    static void SetBoundaryConditions(int b, read_write_accessor x, std::size_t N) {
+    static void SetBoundaryConditions(int b, std::vector<float>& x, std::size_t N) {
         for (std::size_t i{ 1 }; i < N - 1; ++i) {
             auto top{ IX(i, 1, N) };
             auto bottom{ IX(i, N - 2, N) };
@@ -163,30 +171,89 @@ public:
         x[IX(N - 1, N - 1, N)] = 0.33f * (x[IX(N - 2, N - 1, N)] + x[IX(N - 1, N - 2, N)] + x[IX(N - 1, N - 1, N)]);
     }
 
-    // Solve linear differential equation of density / velocity.
-    static void LinearSolve(int b, read_write_accessor x, read_write_accessor x0, float a, float c_reciprocal, int iterations, std::size_t N, cl::sycl::handler& cgh) {
-        cgh.parallel_for<fluid_linear_solve>(cl::sycl::range<3>(iterations, N - 2, N - 2), [=](cl::sycl::item<3> item) {
-            auto iteration{ item.get_id(0) };
-            auto i{ item.get_id(1) + 1 };
-            auto j{ item.get_id(2) + 1 };
-            auto index{ IX(i, j, N) };
-            x[index] = (x0[index] + a
-                                * (x[IX(i + 1, j, N)]
-                                    + x[IX(i - 1, j, N)]
-                                    + x[IX(i, j + 1, N)]
-                                    + x[IX(i, j - 1, N)]
-                                    + x[index]
-                                    + x[index]
-                                    )) * c_reciprocal;
-            SetBoundaryConditions(b, x, N);
+    // Set boundaries to opposite of adjacent layer.
+    static void SetBoundaryConditions(int b, read_write_accessor x, std::size_t N, cl::sycl::handler& cgh) {
+        cgh.single_task<fluid_kernel<0>>([=]() {
+            for (std::size_t i{ 1 }; i < N - 1; ++i) {
+                auto top{ IX(i, 1, N) };
+                auto bottom{ IX(i, N - 2, N) };
+                x[IX(i, 0, N)] = b == 2 ? -x[top] : x[top];
+                x[IX(i, N - 1, N)] = b == 2 ? -x[bottom] : x[bottom];
+            }
+
+            for (std::size_t j{ 1 }; j < N - 1; ++j) {
+                auto left{ IX(1, j, N) };
+                auto right{ IX(N - 2, j, N) };
+                x[IX(0, j, N)] = b == 1 ? -x[left] : x[left];
+                x[IX(N - 1, j, N)] = b == 1 ? -x[right] : x[right];
+            }
+
+            // Set corner boundaries
+            x[IX(0, 0, N)] = 0.33f * (x[IX(1, 0, N)] + x[IX(0, 1, N)] + x[IX(0, 0, N)]);
+            x[IX(0, N - 1, N)] = 0.33f * (x[IX(1, N - 1, N)] + x[IX(0, N - 2, N)] + x[IX(0, N - 1, N)]);
+            x[IX(N - 1, 0, N)] = 0.33f * (x[IX(N - 2, 0, N)] + x[IX(N - 1, 1, N)] + x[IX(N - 1, 0, N)]);
+            x[IX(N - 1, N - 1, N)] = 0.33f * (x[IX(N - 2, N - 1, N)] + x[IX(N - 1, N - 2, N)] + x[IX(N - 1, N - 1, N)]);
         });
     }
 
+    // Solve linear differential equation of density / velocity.
+    static void LinearSolve(int b, std::vector<float>& x, std::vector<float>& x0, float a, float c_reciprocal, std::size_t N) {
+        for (std::size_t j{ 1 }; j < N - 1; ++j) {
+            for (std::size_t i{ 1 }; i < N - 1; ++i) {
+                auto index{ IX(i, j, N) };
+                x[index] = (x0[index] +
+                            a * (
+                                x[IX(i + 1, j, N)]
+                                + x[IX(i - 1, j, N)]
+                                + x[IX(i, j + 1, N)]
+                                + x[IX(i, j - 1, N)]
+                                + x[index]
+                                + x[index]
+                                )
+                            ) * c_reciprocal;
+            }
+        }
+    }
+
+    // Solve linear differential equation of density / velocity.
+    static void LinearSolve(int b, read_write_accessor x, read_write_accessor x0, float a, float c_reciprocal, std::size_t N, cl::sycl::handler& cgh) {
+        cgh.parallel_for<fluid_linear_solve>(cl::sycl::range<2>(N - 2, N - 2), [=](cl::sycl::item<2> item) {
+            auto i{ 1 + item.get_id(0) };
+            auto j{ 1 + item.get_id(1) };
+            auto index{ IX(i, j, N) };
+            x[index] = (x0[index] +
+                        a * (
+                            x[IX(i + 1, j, N)]
+                            + x[IX(i - 1, j, N)]
+                            + x[IX(i, j + 1, N)]
+                            + x[IX(i, j - 1, N)]
+                            + x[index]
+                            + x[index]
+                            )
+                        ) * c_reciprocal;
+        });
+    }
+
+    static void Project(std::vector<float>& vx, std::vector<float>& vy, std::vector<float>& p, std::vector<float>& div, std::size_t iterations, std::size_t N) {
+        for (std::size_t j{ 1 }; j < N - 1; ++j) {
+            for (std::size_t i{ 1 }; i < N - 1; ++i) {
+                auto index{ IX(i, j, N) };
+                div[index] = -0.5f * (
+                    vx[IX(i + 1, j, N)]
+                    - vx[IX(i - 1, j, N)]
+                    + vy[IX(i, j + 1, N)]
+                    - vy[IX(i, j - 1, N)]
+                    ) / N;
+                p[index] = 0;
+            }
+        }
+    }
+
     // Converse 'mass' of density / velocity fields.
-    static void Project1(read_write_accessor vx, read_write_accessor vy, read_write_accessor p, read_write_accessor div, int iter, std::size_t N, cl::sycl::handler& cgh) {
+    static void Project1(read_write_accessor vx, read_write_accessor vy, read_write_accessor p, read_write_accessor div, std::size_t N, cl::sycl::handler& cgh) {
         cgh.parallel_for<fluid_project1>(cl::sycl::range<2>(N - 2, N - 2), [=](cl::sycl::item<2> item) {
-            auto i{ item.get_id(0) + 1 };
-            auto j{ item.get_id(1) + 1 };
+            auto i{ 1 + item.get_id(0) };
+            auto j{ 1 + item.get_id(1) };
             auto index{ IX(i, j, N) };
             div[index] = -0.5f * (
                 vx[IX(i + 1, j, N)]
@@ -197,39 +264,60 @@ public:
             p[index] = 0;
         });
     }
-    static void Project2(read_write_accessor vx, read_write_accessor vy, read_write_accessor p, read_write_accessor div, int iter, std::size_t N, cl::sycl::handler & cgh) {
-        cgh.single_task<fluid_project2>([=]() {
-            SetBoundaryConditions(0, div, N);
-            SetBoundaryConditions(0, p, N);
-        });
+
+    // Converse 'mass' of density / velocity fields.
+    static void Project2(std::vector<float>&vx, std::vector<float>&vy, std::vector<float>&p, std::size_t N) {
+        for (std::size_t j{ 1 }; j < N - 1; ++j) {
+            for (std::size_t i{ 1 }; i < N - 1; ++i) {
+                auto index{ IX(i, j, N) };
+                vx[index] -= 0.5f * (p[IX(i + 1, j, N)] - p[IX(i - 1, j, N)]) * N;
+                vy[index] -= 0.5f * (p[IX(i, j + 1, N)] - p[IX(i, j - 1, N)]) * N;
+            }
+        }
     }
-    static void Project3(read_write_accessor vx, read_write_accessor vy, read_write_accessor p, read_write_accessor div, int iter, std::size_t N, cl::sycl::handler & cgh) {
-        float c{ 6.0f };
-        LinearSolve(0, p, div, 1, 1.0f / c, iter, N, cgh);
-    }
-    static void Project4(read_write_accessor vx, read_write_accessor vy, read_write_accessor p, read_write_accessor div, int iter, std::size_t N, cl::sycl::handler& cgh) {
-        cgh.parallel_for<fluid_project4>(cl::sycl::range<2>(N - 2, N - 2), [=](cl::sycl::item<2> item) {
-            auto i{ item.get_id(0) + 1 };
-            auto j{ item.get_id(1) + 1 };
+
+    // Converse 'mass' of density / velocity fields.
+    static void Project2(read_write_accessor vx, read_write_accessor vy, read_write_accessor p, std::size_t N, cl::sycl::handler& cgh) {
+        cgh.parallel_for<fluid_project2>(cl::sycl::range<2>(N - 2, N - 2), [=](cl::sycl::item<2> item) {
+            auto i{ 1 + item.get_id(0) };
+            auto j{ 1 + item.get_id(1) };
             auto index{ IX(i, j, N) };
             vx[index] -= 0.5f * (p[IX(i + 1, j, N)] - p[IX(i - 1, j, N)]) * N;
             vy[index] -= 0.5f * (p[IX(i, j + 1, N)] - p[IX(i, j - 1, N)]) * N;
         });
     }
-    static void Project5(read_write_accessor vx, read_write_accessor vy, read_write_accessor p, read_write_accessor div, int iter, std::size_t N, cl::sycl::handler& cgh) {
-        cgh.single_task<fluid_project5>([=]() {
-            SetBoundaryConditions(1, vx, N);
-            SetBoundaryConditions(2, vy, N);
-        });
+
+    // Move density / velocity within the field to the next step.
+    static void Advect(int b, std::vector<float>& d, std::vector<float>& d0, std::vector<float>& u, std::vector<float>& v, float dt0, std::size_t N) {
+        for (std::size_t i{ 1 }; i < N - 1; ++i) {
+            for (std::size_t j{ 1 }; j < N - 1; ++j) {
+                auto index{ IX(i, j, N) };
+
+                float x{ i - dt0 * u[index] };
+                float y{ j - dt0 * v[index] };
+                x = Clamp(x, 0.5f, N + 0.5f);
+                auto i0 = (int)x;
+                auto i1 = i0 + 1;
+                y = Clamp(y, 0.5f, N + 0.5f);
+                auto j0 = (int)y;
+                auto j1 = j0 + 1;
+                float s1{ x - i0 };
+                float s0{ 1 - s1 };
+                float t1{ y - j0 };
+                float t0{ 1 - t1 };
+                d[index] = s0 * (t0 * d0[IX(i0, j0, N)] + t1 * d0[IX(i0, j1, N)]) +
+                    s1 * (t0 * d0[IX(i1, j0, N)] + t1 * d0[IX(i1, j1, N)]);
+            }
+        }
     }
 
     // Move density / velocity within the field to the next step.
-    static void Advect1(int b, read_write_accessor d, read_write_accessor d0, read_write_accessor u, read_write_accessor v, float dt, std::size_t N, cl::sycl::handler& cgh) {
-        float dt0{ dt * N };
-        cgh.parallel_for<fluid_advect1>(cl::sycl::range<2>(N, N), [=](cl::sycl::item<2> item) {
+    static void Advect(int b, read_write_accessor d, read_write_accessor d0, read_write_accessor u, read_write_accessor v, float dt0, std::size_t N, cl::sycl::handler& cgh) {
+        cgh.parallel_for<fluid_advect>(cl::sycl::range<2>(N - 2, N - 2), [=](cl::sycl::item<2> item) {
             auto i{ 1 + item.get_id(0) };
             auto j{ 1 + item.get_id(1) };
             auto index{ IX(i, j, N) };
+
             float x{ i - dt0 * u[index] };
             float y{ j - dt0 * v[index] };
             x = Clamp(x, 0.5f, N + 0.5f);
@@ -246,111 +334,98 @@ public:
                 s1 * (t0 * d0[IX(i1, j0, N)] + t1 * d0[IX(i1, j1, N)]);
         });
     }
-    static void Advect2(int b, read_write_accessor d, read_write_accessor d0, read_write_accessor u, read_write_accessor v, float dt, std::size_t N, cl::sycl::handler& cgh) {
-        cgh.single_task<fluid_advect2>([=]() {
-            SetBoundaryConditions(b, d, N);
-        });
-    }
 
     void Update() {
+        for (std::size_t iteration{ 0 }; iteration < velocity_iterations; ++iteration) {
+            Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
+                LinearSolve(1, px_a, x_a, a_velocity, c_reciprocal_velocity, size, cgh);
+                LinearSolve(2, py_a, y_a, a_velocity, c_reciprocal_velocity, size, cgh);
+            }, x_b, px_b, y_b, py_b);
+            Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
+                SetBoundaryConditions(1, px_a, size, cgh);
+                SetBoundaryConditions(2, py_a, size, cgh);
+            }, x_b, px_b, y_b, py_b);
+        }
 
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a) {
-            LinearSolve(1, px_a, x_a, a, c_reciprocal, 4, size, cgh);
-        }, x_b, px_b);
-        Submit(queue, [&](cl::sycl::handler& cgh, auto y_a, auto py_a) {
-            LinearSolve(2, py_a, y_a, a, c_reciprocal, 4, size, cgh);
-        }, y_b, py_b);
         Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
-            Project1(px_a, py_a, x_a, y_a, 4, size, cgh);
+            Project1(px_a, py_a, x_a, y_a, size, cgh);
         }, x_b, px_b, y_b, py_b);
         Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
-            Project2(px_a, py_a, x_a, y_a, 4, size, cgh);
+            SetBoundaryConditions(0, y_a, size, cgh);
+            SetBoundaryConditions(0, x_a, size, cgh);
+        }, x_b, px_b, y_b, py_b);
+
+        for (std::size_t iteration{ 0 }; iteration < velocity_iterations; ++iteration) {
+            Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto y_a) {
+                LinearSolve(0, x_a, y_a, 1.0f, c_reciprocal_project, size, cgh);
+            }, x_b, y_b);
+            Submit(queue, [&](cl::sycl::handler& cgh, auto x_a) {
+                SetBoundaryConditions(0, x_a, size, cgh);
+            }, x_b);
+        }
+
+        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto py_a) {
+            Project2(px_a, py_a, x_a, size, cgh);
+        }, x_b, px_b, py_b);
+
+        Submit(queue, [&](cl::sycl::handler& cgh, auto px_a, auto py_a) {
+            SetBoundaryConditions(1, px_a, size, cgh);
+            SetBoundaryConditions(2, py_a, size, cgh);
+        }, px_b, py_b);
+
+        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
+            Advect(1, x_a, px_a, px_a, py_a, dt0, size, cgh);
+            Advect(2, y_a, py_a, px_a, py_a, dt0, size, cgh);
+        }, x_b, px_b, y_b, py_b);
+        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto y_a) {
+            SetBoundaryConditions(1, x_a, size, cgh);
+            SetBoundaryConditions(2, y_a, size, cgh);
+        }, x_b, y_b);
+
+        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
+            Project1(x_a, y_a, px_a, py_a, size, cgh);
         }, x_b, px_b, y_b, py_b);
         Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
-            Project3(px_a, py_a, x_a, y_a, 4, size, cgh);
+            SetBoundaryConditions(0, py_a, size, cgh);
+            SetBoundaryConditions(0, px_a, size, cgh);
         }, x_b, px_b, y_b, py_b);
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
-            Project4(px_a, py_a, x_a, y_a, 4, size, cgh);
-        }, x_b, px_b, y_b, py_b);
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
-            Project5(px_a, py_a, x_a, y_a, 4, size, cgh);
-        }, x_b, px_b, y_b, py_b);
-        /*
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
-            Advect(1, x_a, px_a, px_a, py_a, dt, size, cgh);
-        }, x_b, px_b, y_b, py_b);
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
-            Advect(2, y_a, py_a, px_a, py_a, dt, size, cgh);
-        }, x_b, px_b, y_b, py_b);
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
-            Project(x_a, y_a, px_a, py_a, 4, size);
-        }, x_b, px_b, y_b, py_b);
-        Submit(queue, [&](cl::sycl::handler& cgh, auto density_a, auto previous_density_a) {
-            Diffuse(0, previous_density_a, density_a, diffusion, dt, 4, size);
-        }, density_b, previous_density_b);
+
+        for (std::size_t iteration{ 0 }; iteration < velocity_iterations; ++iteration) {
+            Submit(queue, [&](cl::sycl::handler& cgh, auto px_a, auto py_a) {
+                LinearSolve(0, px_a, py_a, 1.0f, c_reciprocal_project, size, cgh);
+            }, px_b, py_b);
+            Submit(queue, [&](cl::sycl::handler& cgh, auto px_a) {
+                SetBoundaryConditions(0, px_a, size, cgh);
+            }, px_b);
+        }
+
+        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto y_a, auto px_a) {
+            Project2(x_a, y_a, px_a, size, cgh);
+        }, x_b, y_b, px_b);
+
+        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto y_a) {
+            SetBoundaryConditions(1, x_a, size, cgh);
+            SetBoundaryConditions(2, y_a, size, cgh);
+        }, x_b, y_b);
+
+        for (std::size_t iteration{ 0 }; iteration < density_iterations; ++iteration) {
+            Submit(queue, [&](cl::sycl::handler& cgh, auto density_a, auto previous_density_a) {
+                LinearSolve(0, previous_density_a, density_a, a_density, c_reciprocal_density, size, cgh);
+            }, density_b, previous_density_b);
+            Submit(queue, [&](cl::sycl::handler& cgh, auto previous_density_a) {
+                SetBoundaryConditions(0, previous_density_a, size, cgh);
+            }, previous_density_b);
+        }
+
         Submit(queue, [&](cl::sycl::handler& cgh, auto density_a, auto previous_density_a, auto x_a, auto y_a) {
-            Advect(0, density_a, previous_density_a, x_a, y_a, dt, size, cgh);
-        }, density_b, previous_density_b, x_b, y_b);*/
+            Advect(0, density_a, previous_density_a, x_a, y_a, dt0, size, cgh);
+        }, density_b, previous_density_b, x_b, y_b);
 
-        // queue.submit([&](cl::sycl::handler& cgh) {
-        //     auto x_a = x_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
-        //     auto px_a = px_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
-        //     auto y_a = y_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
-        //     auto py_a = py_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
-        //     auto viscosity = this->viscosity;
-        //     auto dt = this->dt;
-        //     auto size = this->size;
-        //     cgh.single_task<fluid_kernel<1>>([=]() {
-        //         Diffuse(1, px_a, x_a, viscosity, dt, 4, size);
-        //         Diffuse(2, py_a, y_a, viscosity, dt, 4, size);
-        //     });
-        // });
-        // queue.submit([&](cl::sycl::handler& cgh) {
-        //     auto x_a = x_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
-        //     auto px_a = px_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
-        //     auto y_a = y_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
-        //     auto py_a = py_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
-        //     auto size = this->size;
-        //     cgh.single_task<fluid_kernel<2>>([=]() {
-        //         Project(px_a, py_a, x_a, y_a, 4, size);
-        //     });
-        // });
-        // queue.submit([&](cl::sycl::handler& cgh) {
-        //     auto x_a = x_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
-        //     auto px_a = px_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
-        //     auto y_a = y_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
-        //     auto py_a = py_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
-        //     Advect(1, x_a, px_a, px_a, py_a, dt, size, cgh);
-        //     Advect(2, y_a, py_a, px_a, py_a, dt, size, cgh);
-        // });
-        // queue.submit([&](cl::sycl::handler& cgh) {
-        //     auto x_a = x_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
-        //     auto px_a = px_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
-        //     auto y_a = y_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
-        //     auto py_a = py_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
-        //     auto size = this->size;
-        //     cgh.single_task<fluid_kernel<3>>([=]() {
-        //         Project(x_a, y_a, px_a, py_a, 4, size);
-        //     });
-        // });
-        // queue.submit([&](cl::sycl::handler& cgh) {
-        //     auto density_a = density_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
-        //     auto previous_density_a = previous_density_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
-        //     auto diffusion = this->diffusion;
-        //     auto dt = this->dt;
-        //     auto size = this->size;
-        //     cgh.single_task<fluid_kernel<4>>([=]() {
-        //         Diffuse(0, previous_density_a, density_a, diffusion, dt, 4, size);
-        //     });
-        // });
-        // queue.submit([&](cl::sycl::handler& cgh) {
-        //     auto density_a = density_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
-        //     auto previous_density_a = previous_density_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
-        //     auto x_a = x_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
-        //     auto y_a = y_b.template get_access<cl::sycl::access::mode::read_write>(cgh);
-        //     Advect(0, density_a, previous_density_a, x_a, y_a, dt, size, cgh);
-        // });
-        
+        Submit(queue, [&](cl::sycl::handler& cgh, auto density_a) {
+            SetBoundaryConditions(0, density_a, size, cgh);
+        }, density_b);
+
+
     }
 
     template <typename T>
@@ -363,6 +438,7 @@ public:
         queue.submit([&](cl::sycl::handler& cgh){
             lambda(cgh, CreateAccessor(cgh, buffers)...);
         });
+        queue.wait();
     }
 
 private:
@@ -376,8 +452,8 @@ private:
 class FluidSimulation : public engine::Engine {
 public:
 
-    const int SCALE{ 10 };
-    SYCLFluidContainer fluid{ 60, 0.1f, 0.0001f, 0.000001f }; // Dt, Diffusion, Viscosity
+    const int SCALE{ 8 };
+    SYCLFluidContainer fluid{ 75, 0.1f, 0.0001f, 0.000001f }; // Dt, Diffusion, Viscosity
 
     V2_float gravity; // Initial gravity
 
