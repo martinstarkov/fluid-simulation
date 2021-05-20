@@ -336,96 +336,78 @@ public:
     }
 
     void Update() {
+        engine::Timer timer;
+        timer.Start();
+        
         for (std::size_t iteration{ 0 }; iteration < velocity_iterations; ++iteration) {
             Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
                 LinearSolve(1, px_a, x_a, a_velocity, c_reciprocal_velocity, size, cgh);
                 LinearSolve(2, py_a, y_a, a_velocity, c_reciprocal_velocity, size, cgh);
             }, x_b, px_b, y_b, py_b);
-            Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
-                SetBoundaryConditions(1, px_a, size, cgh);
-                SetBoundaryConditions(2, py_a, size, cgh);
-            }, x_b, px_b, y_b, py_b);
+            SetBoundaryConditions(1, px, size);
+            SetBoundaryConditions(2, py, size);
         }
 
         Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
             Project1(px_a, py_a, x_a, y_a, size, cgh);
         }, x_b, px_b, y_b, py_b);
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
-            SetBoundaryConditions(0, y_a, size, cgh);
-            SetBoundaryConditions(0, x_a, size, cgh);
-        }, x_b, px_b, y_b, py_b);
+        SetBoundaryConditions(0, y, size);
+        SetBoundaryConditions(0, x, size);
 
         for (std::size_t iteration{ 0 }; iteration < velocity_iterations; ++iteration) {
             Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto y_a) {
                 LinearSolve(0, x_a, y_a, 1.0f, c_reciprocal_project, size, cgh);
             }, x_b, y_b);
-            Submit(queue, [&](cl::sycl::handler& cgh, auto x_a) {
-                SetBoundaryConditions(0, x_a, size, cgh);
-            }, x_b);
+            SetBoundaryConditions(0, x, size);
         }
 
         Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto py_a) {
             Project2(px_a, py_a, x_a, size, cgh);
         }, x_b, px_b, py_b);
 
-        Submit(queue, [&](cl::sycl::handler& cgh, auto px_a, auto py_a) {
-            SetBoundaryConditions(1, px_a, size, cgh);
-            SetBoundaryConditions(2, py_a, size, cgh);
-        }, px_b, py_b);
+        SetBoundaryConditions(1, px, size);
+        SetBoundaryConditions(2, py, size);
 
         Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
             Advect(1, x_a, px_a, px_a, py_a, dt0, size, cgh);
             Advect(2, y_a, py_a, px_a, py_a, dt0, size, cgh);
         }, x_b, px_b, y_b, py_b);
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto y_a) {
-            SetBoundaryConditions(1, x_a, size, cgh);
-            SetBoundaryConditions(2, y_a, size, cgh);
-        }, x_b, y_b);
+        SetBoundaryConditions(1, x, size);
+        SetBoundaryConditions(2, y, size);
 
         Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
             Project1(x_a, y_a, px_a, py_a, size, cgh);
         }, x_b, px_b, y_b, py_b);
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
-            SetBoundaryConditions(0, py_a, size, cgh);
-            SetBoundaryConditions(0, px_a, size, cgh);
-        }, x_b, px_b, y_b, py_b);
+        SetBoundaryConditions(0, py, size);
+        SetBoundaryConditions(0, px, size);
 
         for (std::size_t iteration{ 0 }; iteration < velocity_iterations; ++iteration) {
             Submit(queue, [&](cl::sycl::handler& cgh, auto px_a, auto py_a) {
                 LinearSolve(0, px_a, py_a, 1.0f, c_reciprocal_project, size, cgh);
             }, px_b, py_b);
-            Submit(queue, [&](cl::sycl::handler& cgh, auto px_a) {
-                SetBoundaryConditions(0, px_a, size, cgh);
-            }, px_b);
+            SetBoundaryConditions(0, px, size);
         }
 
         Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto y_a, auto px_a) {
             Project2(x_a, y_a, px_a, size, cgh);
         }, x_b, y_b, px_b);
 
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto y_a) {
-            SetBoundaryConditions(1, x_a, size, cgh);
-            SetBoundaryConditions(2, y_a, size, cgh);
-        }, x_b, y_b);
+        SetBoundaryConditions(1, x, size);
+        SetBoundaryConditions(2, y, size);
 
         for (std::size_t iteration{ 0 }; iteration < density_iterations; ++iteration) {
             Submit(queue, [&](cl::sycl::handler& cgh, auto density_a, auto previous_density_a) {
                 LinearSolve(0, previous_density_a, density_a, a_density, c_reciprocal_density, size, cgh);
             }, density_b, previous_density_b);
-            Submit(queue, [&](cl::sycl::handler& cgh, auto previous_density_a) {
-                SetBoundaryConditions(0, previous_density_a, size, cgh);
-            }, previous_density_b);
+            SetBoundaryConditions(0, previous_density, size);
         }
 
         Submit(queue, [&](cl::sycl::handler& cgh, auto density_a, auto previous_density_a, auto x_a, auto y_a) {
             Advect(0, density_a, previous_density_a, x_a, y_a, dt0, size, cgh);
         }, density_b, previous_density_b, x_b, y_b);
 
-        Submit(queue, [&](cl::sycl::handler& cgh, auto density_a) {
-            SetBoundaryConditions(0, density_a, size, cgh);
-        }, density_b);
-
-
+        SetBoundaryConditions(0, density, size);
+        engine::PrintLine(timer.Elapsed<engine::milliseconds>().count());
     }
 
     template <typename T>
@@ -452,13 +434,13 @@ private:
 class FluidSimulation : public engine::Engine {
 public:
 
-    const int SCALE{ 2 };
-    SYCLFluidContainer fluid{ 300, 0.1f, 0.0001f, 0.000001f }; // Dt, Diffusion, Viscosity
+    const int SCALE{ 8 };
+    SYCLFluidContainer fluid{ 75, 0.1f, 0.0001f, 0.000001f }; // Dt, Diffusion, Viscosity
 
     V2_float gravity; // Initial gravity
 
     float gravity_increment{ 1.0f }; // Increment by which gravity increases / decreases
-    int radius{ 4 };
+    int radius{ 0 };
 
     engine::Texture texture;
 
