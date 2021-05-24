@@ -1,6 +1,10 @@
+#pragma once
+
 #include <cstdlib> // std::size_t
 #include <vector> // std::vector
 #include <algorithm> // std::fill
+
+#include <protegon.h>
 
 class FluidContainer {
 public:
@@ -205,6 +209,9 @@ public:
 
     // Update the fluid.
     void Update() {
+        engine::Timer timer;
+        timer.Start();
+
         Diffuse(1, px, x, viscosity, dt, 4, size);
         Diffuse(2, py, y, viscosity, dt, 4, size);
         Project(px, py, x, y, 4, size);
@@ -213,6 +220,8 @@ public:
         Project(x, y, px, py, 4, size);
         Diffuse(0, previous_density, density, diffusion, dt, 4, size);
         Advect(0, density, previous_density, x, y, dt, size);
+
+        engine::PrintLine(timer.Elapsed<engine::milliseconds>().count());
     }
 private:
     // Clamp value to a range.
