@@ -10,7 +10,9 @@ set(SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 set(SRC_FILES
 "${SRC_DIR}/Application.cpp"
-"${SRC_DIR}/FluidContainer.h")
+"${SRC_DIR}/FluidContainer.h"
+"${SRC_DIR}/SYCLFluidContainer.h"
+"${SRC_DIR}/FluidSimulation.h")
 
 # Add include directories to project.
 
