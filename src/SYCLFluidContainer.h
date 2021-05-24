@@ -240,10 +240,10 @@ public:
             auto index{ IX(i, j, N) };
             float x{ i - dt0 * u[index] };
             float y{ j - dt0 * v[index] };
-            x = Clamp(x, 0.5f, N + 0.5f);
+            x = x >= N + 0.5f ? N + 0.5f : x <= 0.5f ? 0.5f : x;
             auto i0 = (int)x;
             auto i1 = i0 + 1;
-            y = Clamp(y, 0.5f, N + 0.5f);
+            y = y >= N + 0.5f ? N + 0.5f : y <= 0.5f ? 0.5f : y;
             auto j0 = (int)y;
             auto j1 = j0 + 1;
             float s1{ x - i0 };
@@ -257,83 +257,167 @@ public:
 
     void Update() {
         engine::Timer timer;
+        engine::Timer total_timer;
+
+        total_timer.Start();
+        timer.Start();
+
+        for (std::size_t iteration{ 0 }; iteration < velocity_iterations; ++iteration) {
+            Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a) {
+                LinearSolve(1, px_a, x_a, a_velocity, c_reciprocal_velocity, size, cgh);
+            }, x_b, px_b);
+            Submit(queue, [&](cl::sycl::handler& cgh, auto px_a) {
+                SetBoundaryConditions(1, px_a, size, cgh);
+            }, px_b);
+        }
+
+        engine::PrintLine("linear_solve1: ", timer.Elapsed<engine::milliseconds>().count());
+        timer.Start();
+
+        for (std::size_t iteration{ 0 }; iteration < velocity_iterations; ++iteration) {
+            Submit(queue, [&](cl::sycl::handler& cgh, auto y_a, auto py_a) {
+                LinearSolve(2, py_a, y_a, a_velocity, c_reciprocal_velocity, size, cgh);
+            }, y_b, py_b);
+            Submit(queue, [&](cl::sycl::handler& cgh, auto py_a) {
+                SetBoundaryConditions(2, py_a, size, cgh);
+            }, py_b);
+        }
+
+        engine::PrintLine("linear_solve2: ", timer.Elapsed<engine::milliseconds>().count());
         timer.Start();
 
         Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
-            for (std::size_t iteration{ 0 }; iteration < velocity_iterations; ++iteration) {
-                LinearSolve(1, px_a, x_a, a_velocity, c_reciprocal_velocity, size, cgh);
-                LinearSolve(2, py_a, y_a, a_velocity, c_reciprocal_velocity, size, cgh);
-                SetBoundaryConditions(1, px, size);
-                SetBoundaryConditions(2, py, size);
-            }
-        }, x_b, px_b, y_b, py_b);
-
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
             Project1(px_a, py_a, x_a, y_a, size, cgh);
-            SetBoundaryConditions(0, y, size);
-            SetBoundaryConditions(0, x, size);
         }, x_b, px_b, y_b, py_b);
 
-        queue.wait();
+        engine::PrintLine("project1: ", timer.Elapsed<engine::milliseconds>().count());
+        timer.Start();
 
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto y_a, auto px_a, auto py_a) {
-            for (std::size_t iteration{ 0 }; iteration < velocity_iterations; ++iteration) {
+        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a) {
+            SetBoundaryConditions(0, x_a, size, cgh);
+        }, x_b);
+        Submit(queue, [&](cl::sycl::handler& cgh, auto y_a) {
+            SetBoundaryConditions(0, y_a, size, cgh);
+        }, y_b);
+
+        for (std::size_t iteration{ 0 }; iteration < velocity_iterations; ++iteration) {
+            Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto y_a) {
                 LinearSolve(0, x_a, y_a, 1.0f, c_reciprocal_project, size, cgh);
-                SetBoundaryConditions(0, x, size);
-            }
-            Project2(px_a, py_a, x_a, size, cgh);
-            SetBoundaryConditions(1, px, size);
-            SetBoundaryConditions(2, py, size);
-        }, x_b, y_b, px_b, py_b);
+            }, x_b, y_b);
+            Submit(queue, [&](cl::sycl::handler& cgh, auto x_a) {
+                SetBoundaryConditions(0, x_a, size, cgh);
+            }, x_b);
+        }
 
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
+        engine::PrintLine("linear_solve3: ", timer.Elapsed<engine::milliseconds>().count());
+        timer.Start();
+
+        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto py_a) {
+            Project2(px_a, py_a, x_a, size, cgh);
+        }, x_b, px_b, py_b);
+        Submit(queue, [&](cl::sycl::handler& cgh, auto px_a) {
+            SetBoundaryConditions(1, px_a, size, cgh);
+        }, px_b);
+        Submit(queue, [&](cl::sycl::handler& cgh, auto py_a) {
+            SetBoundaryConditions(2, py_a, size, cgh);
+        }, py_b);
+
+        engine::PrintLine("project2: ", timer.Elapsed<engine::milliseconds>().count());
+        timer.Start();
+
+        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto py_a) {
             Advect(1, x_a, px_a, px_a, py_a, dt0, size, cgh);
+        }, x_b, px_b, py_b);
+        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a) {
+            SetBoundaryConditions(1, x_a, size, cgh);
+        }, x_b);
+
+        engine::PrintLine("advect1: ", timer.Elapsed<engine::milliseconds>().count());
+        timer.Start();
+
+        Submit(queue, [&](cl::sycl::handler& cgh, auto y_a, auto px_a, auto py_a) {
             Advect(2, y_a, py_a, px_a, py_a, dt0, size, cgh);
-            SetBoundaryConditions(1, x, size);
-            SetBoundaryConditions(2, y, size);
-        }, x_b, px_b, y_b, py_b);
+        }, y_b, px_b, py_b);
+        Submit(queue, [&](cl::sycl::handler& cgh, auto y_a) {
+            SetBoundaryConditions(2, y_a, size, cgh);
+        }, y_b);
+
+        engine::PrintLine("advect2: ", timer.Elapsed<engine::milliseconds>().count());
+        timer.Start();
 
         Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
             Project1(x_a, y_a, px_a, py_a, size, cgh);
-            SetBoundaryConditions(0, py, size);
-            SetBoundaryConditions(0, px, size);
         }, x_b, px_b, y_b, py_b);
+        Submit(queue, [&](cl::sycl::handler& cgh, auto px_a) {
+            SetBoundaryConditions(0, px_a, size, cgh);
+        }, px_b);
+        Submit(queue, [&](cl::sycl::handler& cgh, auto py_a) {
+            SetBoundaryConditions(0, py_a, size, cgh);
+        }, py_b);
 
-        queue.wait();
+        engine::PrintLine("project3: ", timer.Elapsed<engine::milliseconds>().count());
+        timer.Start();
 
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto y_a, auto px_a, auto py_a, auto density_a, auto previous_density_a) {
-            for (std::size_t iteration{ 0 }; iteration < velocity_iterations; ++iteration) {
+        for (std::size_t iteration{ 0 }; iteration < velocity_iterations; ++iteration) {
+            Submit(queue, [&](cl::sycl::handler& cgh, auto px_a, auto py_a) {
                 LinearSolve(0, px_a, py_a, 1.0f, c_reciprocal_project, size, cgh);
-                SetBoundaryConditions(0, px, size);
-            }
-            Project2(x_a, y_a, px_a, size, cgh);
-            SetBoundaryConditions(1, x, size);
-            SetBoundaryConditions(2, y, size);
-            for (std::size_t iteration{ 0 }; iteration < density_iterations; ++iteration) {
-                LinearSolve(0, previous_density_a, density_a, a_density, c_reciprocal_density, size, cgh);
-                SetBoundaryConditions(0, previous_density, size);
-            }
-        }, x_b, y_b, px_b, py_b, density_b, previous_density_b);
+            }, px_b, py_b);
+            Submit(queue, [&](cl::sycl::handler& cgh, auto px_a) {
+                SetBoundaryConditions(0, px_a, size, cgh);
+            }, px_b);
+        }
 
-        queue.wait();
+        engine::PrintLine("linear_solve4: ", timer.Elapsed<engine::milliseconds>().count());
+        timer.Start();
+
+        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto y_a, auto px_a) {
+            Project2(x_a, y_a, px_a, size, cgh);
+        }, x_b, y_b, px_b);
+
+        engine::PrintLine("project4: ", timer.Elapsed<engine::milliseconds>().count());
+        timer.Start();
+
+        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a) {
+            SetBoundaryConditions(1, x_a, size, cgh);
+        }, x_b);
+        Submit(queue, [&](cl::sycl::handler& cgh, auto y_a) {
+            SetBoundaryConditions(2, y_a, size, cgh);
+        }, y_b);
+
+        for (std::size_t iteration{ 0 }; iteration < density_iterations; ++iteration) {
+            Submit(queue, [&](cl::sycl::handler& cgh, auto previous_density_a, auto density_a) {
+                LinearSolve(0, previous_density_a, density_a, a_density, c_reciprocal_density, size, cgh);
+            }, previous_density_b, density_b);
+            Submit(queue, [&](cl::sycl::handler& cgh, auto previous_density_a) {
+                SetBoundaryConditions(0, previous_density_a, size, cgh);
+            }, previous_density_b);
+        }
+
+        engine::PrintLine("linear_solve5: ", timer.Elapsed<engine::milliseconds>().count());
+        timer.Start();
 
         Submit(queue, [&](cl::sycl::handler& cgh, auto density_a, auto previous_density_a, auto x_a, auto y_a) {
             Advect(0, density_a, previous_density_a, x_a, y_a, dt0, size, cgh);
-            SetBoundaryConditions(0, density, size);
         }, density_b, previous_density_b, x_b, y_b);
+        Submit(queue, [&](cl::sycl::handler& cgh, auto density_a) {
+            SetBoundaryConditions(0, density_a, size, cgh);
+        }, density_b);
 
-        engine::PrintLine(timer.Elapsed<engine::milliseconds>().count());
+        engine::PrintLine("advect3: ", timer.Elapsed<engine::milliseconds>().count());
+        timer.Start();
+
+        engine::PrintLine(total_timer.Elapsed<engine::milliseconds>().count());
     }
 
     template <typename T, typename ...Ts>
     static void Submit(cl::sycl::queue& queue, T lambda, Ts&... buffers) {
-        queue.submit([&](cl::sycl::handler& cgh) {
+        queue.submit([=](cl::sycl::handler& cgh) {
             lambda(cgh, CreateAccessor(cgh, buffers)...);
         });
     }
 
     template <typename T>
-    static read_write_accessor CreateAccessor(cl::sycl::handler& cgh, T& buffer) {
+    static read_write_accessor CreateAccessor(cl::sycl::handler& cgh, T buffer) {
         return buffer.template get_access<cl::sycl::access::mode::read_write>(cgh);
     }
 

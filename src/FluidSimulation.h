@@ -14,7 +14,7 @@ class FluidSimulation : public engine::Engine {
 public:
 
     const int SCALE{ 2 };
-    SYCLFluidContainer fluid{ 300, 0.1f, 0.0001f, 0.000001f }; // Dt, Diffusion, Viscosity
+    FluidContainer fluid{ 300, 0.1f, 0.0001f, 0.000001f }; // Dt, Diffusion, Viscosity
 
     V2_float gravity; // Initial gravity
 
