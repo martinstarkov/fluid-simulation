@@ -62,5 +62,5 @@ add_protegon_to(${PROJECT_NAME})
 
 add_sycl_to_target(
   TARGET ${PROJECT_NAME}
-  SOURCES ${CPP_FILES}
+  SOURCES "${SRC_DIR}/Application.cpp"
 )

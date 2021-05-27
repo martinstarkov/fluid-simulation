@@ -61,15 +61,11 @@ public:
         y.resize(s);
         previous_density.resize(s);
         density.resize(s);
-        cl::sycl::property_list props{ cl::sycl::property::buffer::use_host_ptr() };
-        x_b = { x.data(), x.size(), props };
-        y_b = { y.data(), y.size(), props };
-        px_b = { px.data(), px.size(), props };
-        py_b = { py.data(), py.size(), props };
-        previous_density_b = { previous_density.data(), previous_density.size(), props };
-        density_b = { density.data(), density.size(), props };
+        queue = cl::sycl::queue{ cl::sycl::default_selector{}, exception_handler };
     }
     ~SYCLFluidContainer() = default;
+
+    cl::sycl::property_list props{ cl::sycl::property::buffer::use_host_ptr() };
 
     // Reset fluid to empty.
     void Reset() {
@@ -152,14 +148,14 @@ public:
     using read_write_accessor
         = cl::sycl::accessor<float, 1, cl::sycl::access::mode::read_write, cl::sycl::access::target::global_buffer, cl::sycl::access::placeholder::false_t>;
 
-    cl::sycl::queue queue{ cl::sycl::host_selector{}, exception_handler };
+    cl::sycl::queue queue;
 
-    cl::sycl::buffer<float, 1> x_b;
-    cl::sycl::buffer<float, 1> y_b;
-    cl::sycl::buffer<float, 1> px_b;
-    cl::sycl::buffer<float, 1> py_b;
-    cl::sycl::buffer<float, 1> previous_density_b;
-    cl::sycl::buffer<float, 1> density_b;
+    //cl::sycl::buffer<float, 1> x_b;
+    //cl::sycl::buffer<float, 1> y_b;
+    //cl::sycl::buffer<float, 1> px_b;
+    //cl::sycl::buffer<float, 1> py_b;
+    //cl::sycl::buffer<float, 1> previous_density_b;
+    //cl::sycl::buffer<float, 1> density_b;
 
     // Set boundaries to opposite of adjacent layer. (SYCL VERSION).
     static void SetBoundaryConditions(int b, read_write_accessor x, std::size_t N, cl::sycl::handler& cgh) {
@@ -191,17 +187,17 @@ public:
         cgh.parallel_for<fluid_linear_solve>(cl::sycl::range<2>(N - 2, N - 2), [=](cl::sycl::item<2> item) {
             auto i{ 1 + item.get_id(0) };
             auto j{ 1 + item.get_id(1) };
-            auto index{ IX(i, j, N) };
-            x[index] = (x0[index] +
-                        a * (
-                            x[IX(i + 1, j, N)]
-                            + x[IX(i - 1, j, N)]
-                            + x[IX(i, j + 1, N)]
-                            + x[IX(i, j - 1, N)]
-                            + x[index]
-                            + x[index]
-                            )
-                        ) * c_reciprocal;
+                auto index{ IX(i, j, N) };
+                x[index] = (x0[index] +
+                            a * (
+                                x[IX(i + 1, j, N)]
+                                + x[IX(i - 1, j, N)]
+                                + x[IX(i, j + 1, N)]
+                                + x[IX(i, j - 1, N)]
+                                + x[index]
+                                + x[index]
+                                )
+                            ) * c_reciprocal;
         });
     }
 
@@ -256,6 +252,12 @@ public:
     }
 
     void Update() {
+        cl::sycl::buffer<float, 1> x_b{ x.data(), x.size(), props };
+        cl::sycl::buffer<float, 1> y_b{ y.data(), y.size(), props };
+        cl::sycl::buffer<float, 1> px_b{ px.data(), px.size(), props };
+        cl::sycl::buffer<float, 1> py_b{ py.data(), py.size(), props };
+        cl::sycl::buffer<float, 1> previous_density_b{ previous_density.data(), previous_density.size(), props };                 
+        cl::sycl::buffer<float, 1> density_b{ density.data(), density.size(), props };
         engine::Timer timer;
         engine::Timer total_timer;
 
@@ -411,7 +413,7 @@ public:
 
     template <typename T, typename ...Ts>
     static void Submit(cl::sycl::queue& queue, T lambda, Ts&... buffers) {
-        queue.submit([=](cl::sycl::handler& cgh) {
+        queue.submit([&](cl::sycl::handler& cgh) {
             lambda(cgh, CreateAccessor(cgh, buffers)...);
         });
     }
