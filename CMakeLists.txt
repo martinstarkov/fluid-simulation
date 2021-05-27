@@ -20,16 +20,6 @@ include_directories(
     ${SRC_DIR}
 )
 
-# Create executable from all source files.
-
-add_executable(
-    ${PROJECT_NAME}
-    ${SRC_FILES}
-)
-
-add_subdirectory("vendor/protegon")
-add_protegon_to(${PROJECT_NAME})
-
 # Adding SYCL implementation.
 
 list(APPEND CMAKE_MODULE_PATH
@@ -43,9 +33,32 @@ if (NOT ComputeCpp_DIR)
   "ComputeCpp_DIR=<path/to/install/root>.")
 endif()
 
+find_package(OpenCL REQUIRED)
+find_package(ComputeCpp REQUIRED)
+
+include_directories(SYSTEM "${ComputeCpp_INCLUDE_DIRS}")
+include_directories(SYSTEM "${OpenCL_INCLUDE_DIR}")
+
+# Create executable from all source files.
+
+add_executable(
+    ${PROJECT_NAME}
+    ${SRC_FILES}
+)
+
+target_link_libraries (
+  ${PROJECT_NAME}
+  "${OpenCL_LIBRARIES}"
+)
+
 set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 
-find_package(ComputeCpp REQUIRED)
+# Add Engine.
+
+add_subdirectory("vendor/protegon")
+add_protegon_to(${PROJECT_NAME})
+
+# Add SYCL.
 
 add_sycl_to_target(
   TARGET ${PROJECT_NAME}
