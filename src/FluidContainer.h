@@ -221,7 +221,7 @@ public:
         Diffuse(0, previous_density, density, diffusion, dt, 4, size);
         Advect(0, density, previous_density, x, y, dt, size);
 
-        engine::PrintLine(timer.Elapsed<engine::milliseconds>().count());
+        engine::PrintLine("Total time: ", timer.Elapsed<engine::milliseconds>().count());
     }
 private:
     // Clamp value to a range.

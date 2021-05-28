@@ -3,6 +3,8 @@
 #include <CL/sycl.hpp>
 #include <protegon.h>
 
+#include "FluidContainer.h"
+
 // Kernel declarations.
 class fluid_boundary;
 class fluid_linear_solve;
@@ -262,7 +264,7 @@ public:
         engine::Timer total_timer;
 
         total_timer.Start();
-        timer.Start();
+        //timer.Start();
 
         for (std::size_t iteration{ 0 }; iteration < velocity_iterations; ++iteration) {
             Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a) {
@@ -273,8 +275,8 @@ public:
             }, px_b);
         }
 
-        engine::PrintLine("linear_solve1: ", timer.Elapsed<engine::milliseconds>().count());
-        timer.Start();
+        //engine::PrintLine("linear_solve1: ", timer.Elapsed<engine::milliseconds>().count());
+        //timer.Start();
 
         for (std::size_t iteration{ 0 }; iteration < velocity_iterations; ++iteration) {
             Submit(queue, [&](cl::sycl::handler& cgh, auto y_a, auto py_a) {
@@ -285,15 +287,15 @@ public:
             }, py_b);
         }
 
-        engine::PrintLine("linear_solve2: ", timer.Elapsed<engine::milliseconds>().count());
-        timer.Start();
+        //engine::PrintLine("linear_solve2: ", timer.Elapsed<engine::milliseconds>().count());
+        //timer.Start();
 
         Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
             Project1(px_a, py_a, x_a, y_a, size, cgh);
         }, x_b, px_b, y_b, py_b);
 
-        engine::PrintLine("project1: ", timer.Elapsed<engine::milliseconds>().count());
-        timer.Start();
+        //engine::PrintLine("project1: ", timer.Elapsed<engine::milliseconds>().count());
+        //timer.Start();
 
         Submit(queue, [&](cl::sycl::handler& cgh, auto x_a) {
             SetBoundaryConditions(0, x_a, size, cgh);
@@ -311,8 +313,8 @@ public:
             }, x_b);
         }
 
-        engine::PrintLine("linear_solve3: ", timer.Elapsed<engine::milliseconds>().count());
-        timer.Start();
+        //engine::PrintLine("linear_solve3: ", timer.Elapsed<engine::milliseconds>().count());
+        //timer.Start();
 
         Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto py_a) {
             Project2(px_a, py_a, x_a, size, cgh);
@@ -324,8 +326,8 @@ public:
             SetBoundaryConditions(2, py_a, size, cgh);
         }, py_b);
 
-        engine::PrintLine("project2: ", timer.Elapsed<engine::milliseconds>().count());
-        timer.Start();
+        //engine::PrintLine("project2: ", timer.Elapsed<engine::milliseconds>().count());
+        //timer.Start();
 
         Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto py_a) {
             Advect(1, x_a, px_a, px_a, py_a, dt0, size, cgh);
@@ -334,8 +336,8 @@ public:
             SetBoundaryConditions(1, x_a, size, cgh);
         }, x_b);
 
-        engine::PrintLine("advect1: ", timer.Elapsed<engine::milliseconds>().count());
-        timer.Start();
+        //engine::PrintLine("advect1: ", timer.Elapsed<engine::milliseconds>().count());
+        //timer.Start();
 
         Submit(queue, [&](cl::sycl::handler& cgh, auto y_a, auto px_a, auto py_a) {
             Advect(2, y_a, py_a, px_a, py_a, dt0, size, cgh);
@@ -344,8 +346,8 @@ public:
             SetBoundaryConditions(2, y_a, size, cgh);
         }, y_b);
 
-        engine::PrintLine("advect2: ", timer.Elapsed<engine::milliseconds>().count());
-        timer.Start();
+        //engine::PrintLine("advect2: ", timer.Elapsed<engine::milliseconds>().count());
+        //timer.Start();
 
         Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
             Project1(x_a, y_a, px_a, py_a, size, cgh);
@@ -357,8 +359,8 @@ public:
             SetBoundaryConditions(0, py_a, size, cgh);
         }, py_b);
 
-        engine::PrintLine("project3: ", timer.Elapsed<engine::milliseconds>().count());
-        timer.Start();
+        //engine::PrintLine("project3: ", timer.Elapsed<engine::milliseconds>().count());
+        //timer.Start();
 
         for (std::size_t iteration{ 0 }; iteration < velocity_iterations; ++iteration) {
             Submit(queue, [&](cl::sycl::handler& cgh, auto px_a, auto py_a) {
@@ -369,15 +371,15 @@ public:
             }, px_b);
         }
 
-        engine::PrintLine("linear_solve4: ", timer.Elapsed<engine::milliseconds>().count());
-        timer.Start();
+        //engine::PrintLine("linear_solve4: ", timer.Elapsed<engine::milliseconds>().count());
+        //timer.Start();
 
         Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto y_a, auto px_a) {
             Project2(x_a, y_a, px_a, size, cgh);
         }, x_b, y_b, px_b);
 
-        engine::PrintLine("project4: ", timer.Elapsed<engine::milliseconds>().count());
-        timer.Start();
+        //engine::PrintLine("project4: ", timer.Elapsed<engine::milliseconds>().count());
+        //timer.Start();
 
         Submit(queue, [&](cl::sycl::handler& cgh, auto x_a) {
             SetBoundaryConditions(1, x_a, size, cgh);
@@ -395,8 +397,8 @@ public:
             }, previous_density_b);
         }
 
-        engine::PrintLine("linear_solve5: ", timer.Elapsed<engine::milliseconds>().count());
-        timer.Start();
+        //engine::PrintLine("linear_solve5: ", timer.Elapsed<engine::milliseconds>().count());
+        //timer.Start();
 
         Submit(queue, [&](cl::sycl::handler& cgh, auto density_a, auto previous_density_a, auto x_a, auto y_a) {
             Advect(0, density_a, previous_density_a, x_a, y_a, dt0, size, cgh);
@@ -405,10 +407,10 @@ public:
             SetBoundaryConditions(0, density_a, size, cgh);
         }, density_b);
 
-        engine::PrintLine("advect3: ", timer.Elapsed<engine::milliseconds>().count());
-        timer.Start();
+        //engine::PrintLine("advect3: ", timer.Elapsed<engine::milliseconds>().count());
+        //timer.Start();
 
-        engine::PrintLine(total_timer.Elapsed<engine::milliseconds>().count());
+        engine::PrintLine("Fluid update time: ", total_timer.Elapsed<engine::milliseconds>().count());
     }
 
     template <typename T, typename ...Ts>
