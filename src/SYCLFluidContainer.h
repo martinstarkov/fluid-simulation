@@ -1,9 +1,6 @@
 #pragma once
 
 #include <CL/sycl.hpp>
-#include <protegon.h>
-
-#include "FluidContainer.h"
 
 // Kernel declarations.
 class fluid_boundary;
@@ -254,9 +251,6 @@ public:
         float_buffer previous_density_b{ previous_density.data(), previous_density.size(), props };
         float_buffer density_b{ density.data(), density.size(), props };
 
-        engine::Timer total_timer;
-        total_timer.Start();
-
         for (std::size_t iteration{ 0 }; iteration < velocity_iterations; ++iteration) {
             Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a) {
                 LinearSolve(1, px_a, x_a, a_velocity, c_reciprocal_velocity, size, cgh);
@@ -361,8 +355,6 @@ public:
         Submit(queue, [&](cl::sycl::handler& cgh, auto density_a) {
             SetBoundaryConditions(0, density_a, size, cgh);
         }, density_b);
-
-        engine::PrintLine("Fluid update time: ", total_timer.Elapsed<engine::milliseconds>().count());
     }
 
     template <typename T, typename ...Ts>

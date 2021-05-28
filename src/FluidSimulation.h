@@ -11,7 +11,7 @@
 #include "SYCLFluidContainer.h"
 
 template <typename FluidContainerType>
-class FluidSimulation : public engine::Engine {
+class FluidSimulation : public engine::Scene {
 public:
 
     const int SCALE{ 2 };
@@ -24,8 +24,10 @@ public:
 
     engine::Texture texture;
 
-    void Init() {
-        texture = { Engine::GetDisplay().second, { fluid.size, fluid.size }, engine::PixelFormat::ARGB8888, engine::TextureAccess::STREAMING };
+    void Enter() {
+        texture = engine::Renderer::CreateTexture({ fluid.size, fluid.size },
+                                                  engine::PixelFormat::ARGB8888,
+                                                  engine::TextureAccess::STREAMING);
         previous_mouse = engine::InputHandler::GetMousePosition();
     }
     V2_int previous_mouse;
@@ -51,7 +53,7 @@ public:
         // Add fluid.
         auto current_mouse{ engine::InputHandler::GetMousePosition() };
 
-        auto amount{ current_mouse - previous_mouse };
+        V2_float amount{ current_mouse - previous_mouse };
 
         fluid.AddVelocity(current_mouse.x / SCALE, current_mouse.y / SCALE, amount.x, amount.y);
 
@@ -65,16 +67,13 @@ public:
         //}
 
         // Fade overall dye levels slowly over time.
-        fluid.DecreaseDensity(0.99);
+        fluid.DecreaseDensity(0.99f);
 
         // Update fluid.
         fluid.Update();
-        AllocationMetrics::PrintMemoryUsage();
     }
 
     void Render() {
-        engine::Timer timer;
-        timer.Start();
         bool density_graph{ false };
         if (engine::InputHandler::KeyDown(engine::Key::D)) {
             density_graph = !density_graph;
@@ -102,7 +101,6 @@ public:
         }
         texture.Unlock();
         engine::Renderer::DrawTexture(texture, {}, { fluid.size * SCALE, fluid.size * SCALE });
-        engine::PrintLine("Render time: ", timer.Elapsed<engine::milliseconds>().count());
     }
 
 };
