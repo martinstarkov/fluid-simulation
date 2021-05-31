@@ -4,29 +4,8 @@
 #include <vector> // std::vector
 #include <algorithm> // std::fill
 
-#include <protegon.h>
-
 class FluidContainer {
 public:
-    // Size of square container
-    std::size_t size{ 0 };
-    // Delta timestep
-    float dt{ 0.0f };
-    // Rate of diffusion.
-    float diffusion{ 0.0f };
-    // Viscosity of fluid.
-    float viscosity{ 0.0f };
-
-    // Previous velocity components.
-    std::vector<float> px;
-    std::vector<float> py;
-    // Current velocity components.
-    std::vector<float> x;
-    std::vector<float> y;
-    // Previous density at a point.
-    std::vector<float> previous_density;
-    // Current density at a point.
-    std::vector<float> density;
 
     FluidContainer(std::size_t size, float dt, float diffusion, float viscosity) :
         size{ size }, dt{ dt }, diffusion{ diffusion }, viscosity{ viscosity } {
@@ -40,6 +19,14 @@ public:
     }
 
     ~FluidContainer() = default;
+
+    std::size_t GetSize() const {
+        return size;
+    }
+
+    float GetDensity(std::size_t index) const {
+        return density[index];
+    }
 
     // Reset fluid to empty.
     void Reset() {
@@ -56,17 +43,6 @@ public:
         for (auto& d : density) {
             d *= fraction;
         }
-    }
-
-    // Get clamped index based off of coordinates.
-    static std::size_t IX(std::size_t x, std::size_t y, std::size_t N) {
-        // Clamp coordinates.
-        if (x < 0) { x = 0; }
-        if (x > N - 1) { x = N - 1; }
-        if (y < 0) { y = 0; }
-        if (y > N - 1) { y = N - 1; }
-
-        return (y * N) + x;
     }
 
     // Add density to the density field.
@@ -93,6 +69,35 @@ public:
         auto index{ IX(x, y, size) };
         this->x[index] += amount_x;
         this->y[index] += amount_y;
+    }
+
+    // Update the fluid.
+    void Update() {
+        Diffuse(1, px, x, viscosity, dt, 4, size);
+        Diffuse(2, py, y, viscosity, dt, 4, size);
+        Project(px, py, x, y, 4, size);
+        Advect(1, x, px, px, py, dt, size);
+        Advect(2, y, py, px, py, dt, size);
+        Project(x, y, px, py, 4, size);
+        Diffuse(0, previous_density, density, diffusion, dt, 4, size);
+        Advect(0, density, previous_density, x, y, dt, size);
+    }
+private:
+    // Clamp value to a range.
+    template <typename T>
+    static T Clamp(T value, T low, T high) {
+        return value >= high ? high : value <= low ? low : value;
+    }
+
+    // Get clamped index based off of coordinates.
+    static std::size_t IX(std::size_t x, std::size_t y, std::size_t N) {
+        // Clamp coordinates.
+        if (x < 0) { x = 0; }
+        if (x > N - 1) { x = N - 1; }
+        if (y < 0) { y = 0; }
+        if (y > N - 1) { y = N - 1; }
+
+        return (y * N) + x;
     }
 
     // Fluid specific operations.
@@ -191,10 +196,10 @@ public:
                 float x{ i - dt0 * u[index] };
                 float y{ j - dt0 * v[index] };
                 x = Clamp(x, 0.5f, N + 0.5f);
-                auto i0 = (int)x;
+                auto i0{ (int)x };
                 auto i1 = i0 + 1;
                 y = Clamp(y, 0.5f, N + 0.5f);
-                auto j0 = (int)y;
+                auto j0{ (int)y };
                 auto j1 = j0 + 1;
                 float s1{ x - i0 };
                 float s0{ 1 - s1 };
@@ -207,26 +212,23 @@ public:
         SetBoundaryConditions(b, d, N);
     }
 
-    // Update the fluid.
-    void Update() {
-        engine::Timer timer;
-        timer.Start();
+    // Size of square container
+    std::size_t size{ 0 };
+    // Delta timestep
+    float dt{ 0.0f };
+    // Rate of diffusion.
+    float diffusion{ 0.0f };
+    // Viscosity of fluid.
+    float viscosity{ 0.0f };
 
-        Diffuse(1, px, x, viscosity, dt, 4, size);
-        Diffuse(2, py, y, viscosity, dt, 4, size);
-        Project(px, py, x, y, 4, size);
-        Advect(1, x, px, px, py, dt, size);
-        Advect(2, y, py, px, py, dt, size);
-        Project(x, y, px, py, 4, size);
-        Diffuse(0, previous_density, density, diffusion, dt, 4, size);
-        Advect(0, density, previous_density, x, y, dt, size);
-
-        engine::PrintLine("Total time: ", timer.Elapsed<engine::milliseconds>().count());
-    }
-private:
-    // Clamp value to a range.
-    template <typename T>
-    static T Clamp(T value, T low, T high) {
-        return value >= high ? high : value <= low ? low : value;
-    }
+    // Previous velocity components.
+    std::vector<float> px;
+    std::vector<float> py;
+    // Current velocity components.
+    std::vector<float> x;
+    std::vector<float> y;
+    // Previous density at a point.
+    std::vector<float> previous_density;
+    // Current density at a point.
+    std::vector<float> density;
 };
