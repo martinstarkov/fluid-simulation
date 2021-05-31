@@ -1,5 +1,9 @@
 #pragma once
 
+#include <vector> // std::vector
+#include <cstdlib> // std::size_t
+#include <algorithm> // std::fill
+
 #include <CL/sycl.hpp>
 
 // Kernel declarations.
@@ -22,30 +26,6 @@ auto exception_handler = [](sycl::exception_list exceptions) {
 
 class SYCLFluidContainer {
 public:
-
-    // NON-SYCL Member variables.
-
-    std::size_t size{ 0 };
-    std::size_t velocity_iterations{ 4 };
-    std::size_t density_iterations{ 4 };
-
-    float dt{ 0.0f };
-    float diffusion{ 0.0f };
-    float viscosity{ 0.0f };
-    float a_velocity{ 0.0f };
-    float a_density{ 0.0f };
-    float c_reciprocal_velocity{ 0.0f };
-    float c_reciprocal_density{ 0.0f };
-    float c_reciprocal_project{ 1.0f / 6.0f };
-    float dt0{ 0.0f };
-
-    std::vector<float> px;
-    std::vector<float> py;
-    std::vector<float> x;
-    std::vector<float> y;
-    std::vector<float> previous_density;
-    std::vector<float> density;
-
     SYCLFluidContainer(std::size_t size, float dt, float diffusion, float viscosity) :
         size{ size }, dt{ dt }, diffusion{ diffusion }, viscosity{ viscosity } {
         auto s{ size * size };
@@ -63,6 +43,13 @@ public:
     }
     ~SYCLFluidContainer() = default;
 
+    std::size_t GetSize() const {
+        return size;
+    }
+
+    float GetDensity(std::size_t index) const {
+        return density[index];
+    }
 
     // Reset fluid to empty.
     void Reset() {
@@ -79,17 +66,6 @@ public:
         for (auto& d : density) {
             d *= fraction;
         }
-    }
-
-    // Get clamped index based off of coordinates.
-    static std::size_t IX(std::size_t x, std::size_t y, std::size_t N) {
-        // Clamp coordinates.
-        if (x < 0) { x = 0; }
-        if (x > N - 1) { x = N - 1; }
-        if (y < 0) { y = 0; }
-        if (y > N - 1) { y = N - 1; }
-
-        return (y * N) + x;
     }
 
     // Add density to the density field.
@@ -116,38 +92,83 @@ public:
         this->y[index] += py;
     }
 
+    void Update() {
+        float_buffer x_b{ x.data(), x.size(), props };
+        float_buffer y_b{ y.data(), y.size(), props };
+        float_buffer px_b{ px.data(), px.size(), props };
+        float_buffer py_b{ py.data(), py.size(), props };
+        float_buffer previous_density_b{ previous_density.data(), previous_density.size(), props };
+        float_buffer density_b{ density.data(), density.size(), props };
 
-    // Set boundaries to opposite of adjacent layer. (NON-SYCL VERSION).
-    static void SetBoundaryConditions(int b, std::vector<float>& x, std::size_t N) {
-        for (std::size_t i{ 1 }; i < N - 1; ++i) {
-            auto top{ IX(i, 1, N) };
-            auto bottom{ IX(i, N - 2, N) };
-            x[IX(i, 0, N)] = b == 2 ? -x[top] : x[top];
-            x[IX(i, N - 1, N)] = b == 2 ? -x[bottom] : x[bottom];
+        for (std::size_t iteration{ 0 }; iteration < velocity_iterations; ++iteration) {
+            Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a) {
+                LinearSolve(1, px_a, x_a, a_velocity, c_reciprocal_velocity, size, cgh);
+            }, x_b, px_b);
+            Submit(queue, [&](cl::sycl::handler& cgh, auto y_a, auto py_a) {
+                LinearSolve(2, py_a, y_a, a_velocity, c_reciprocal_velocity, size, cgh);
+            }, y_b, py_b);
+            Submit(queue, [&](cl::sycl::handler& cgh, auto px_a) {
+                SetBoundaryConditions(1, px_a, size, cgh);
+            }, px_b);
+            Submit(queue, [&](cl::sycl::handler& cgh, auto py_a) {
+                SetBoundaryConditions(2, py_a, size, cgh);
+            }, py_b);
         }
 
-        for (std::size_t j{ 1 }; j < N - 1; ++j) {
-            auto left{ IX(1, j, N) };
-            auto right{ IX(N - 2, j, N) };
-            x[IX(0, j, N)] = b == 1 ? -x[left] : x[left];
-            x[IX(N - 1, j, N)] = b == 1 ? -x[right] : x[right];
+        Project(px_b, py_b, x_b, y_b);
+
+        Advect(1, x_b, px_b, px_b, py_b);
+        Advect(2, y_b, py_b, px_b, py_b);
+        
+        Project(x_b, y_b, px_b, py_b);
+
+        for (std::size_t iteration{ 0 }; iteration < density_iterations; ++iteration) {
+            Submit(queue, [&](cl::sycl::handler& cgh, auto previous_density_a, auto density_a) {
+                LinearSolve(0, previous_density_a, density_a, a_density, c_reciprocal_density, size, cgh);
+            }, previous_density_b, density_b);
+            Submit(queue, [&](cl::sycl::handler& cgh, auto previous_density_a) {
+                SetBoundaryConditions(0, previous_density_a, size, cgh);
+            }, previous_density_b);
         }
 
-        // Set corner boundaries
-        x[IX(0, 0, N)] = 0.33f * (x[IX(1, 0, N)] + x[IX(0, 1, N)] + x[IX(0, 0, N)]);
-        x[IX(0, N - 1, N)] = 0.33f * (x[IX(1, N - 1, N)] + x[IX(0, N - 2, N)] + x[IX(0, N - 1, N)]);
-        x[IX(N - 1, 0, N)] = 0.33f * (x[IX(N - 2, 0, N)] + x[IX(N - 1, 1, N)] + x[IX(N - 1, 0, N)]);
-        x[IX(N - 1, N - 1, N)] = 0.33f * (x[IX(N - 2, N - 1, N)] + x[IX(N - 1, N - 2, N)] + x[IX(N - 1, N - 1, N)]);
+        Advect(0, density_b, previous_density_b, x_b, y_b);
+
+        queue.wait();
     }
-
-    // SYCL Code
 
     using float_buffer = cl::sycl::buffer<float, 1>;
     using read_write_accessor
         = cl::sycl::accessor<float, 1, cl::sycl::access::mode::read_write, cl::sycl::access::target::global_buffer, cl::sycl::access::placeholder::false_t>;
 
-    cl::sycl::property_list props{ cl::sycl::property::buffer::use_host_ptr() };
-    cl::sycl::queue queue{ cl::sycl::default_selector{}, exception_handler };
+    // Wrapper around queue submission.
+    template <typename T, typename ...Ts>
+    static void Submit(cl::sycl::queue& queue, T lambda, Ts&... buffers) {
+        queue.submit([&](cl::sycl::handler& cgh) {
+            lambda(cgh, CreateAccessor(cgh, buffers)...);
+        });
+    }
+
+    // Creates an accessor from a buffer.
+    template <typename T>
+    static read_write_accessor CreateAccessor(cl::sycl::handler& cgh, T buffer) {
+        return buffer.template get_access<cl::sycl::access::mode::read_write>(cgh);
+    }
+    // Clamp value to a range.
+    template <typename T>
+    static T Clamp(T value, T low, T high) {
+        return value >= high ? high : value <= low ? low : value;
+    }
+
+    // Get clamped index based off of coordinates.
+    static std::size_t IX(std::size_t x, std::size_t y, std::size_t N) {
+        // Clamp coordinates.
+        if (x < 0) { x = 0; }
+        if (x > N - 1) { x = N - 1; }
+        if (y < 0) { y = 0; }
+        if (y > N - 1) { y = N - 1; }
+
+        return (y * N) + x;
+    }
 
     // Set boundaries to opposite of adjacent layer. (SYCL VERSION).
     static void SetBoundaryConditions(int b, read_write_accessor x, std::size_t N, cl::sycl::handler& cgh) {
@@ -179,17 +200,17 @@ public:
         cgh.parallel_for<fluid_linear_solve>(cl::sycl::range<2>(N - 2, N - 2), [=](cl::sycl::item<2> item) {
             auto i{ 1 + item.get_id(0) };
             auto j{ 1 + item.get_id(1) };
-                auto index{ IX(i, j, N) };
-                x[index] = (x0[index] +
-                            a * (
-                                x[IX(i + 1, j, N)]
-                                + x[IX(i - 1, j, N)]
-                                + x[IX(i, j + 1, N)]
-                                + x[IX(i, j - 1, N)]
-                                + x[index]
-                                + x[index]
-                                )
-                            ) * c_reciprocal;
+            auto index{ IX(i, j, N) };
+            x[index] = (x0[index] +
+                        a * (
+                            x[IX(i + 1, j, N)]
+                            + x[IX(i - 1, j, N)]
+                            + x[IX(i, j + 1, N)]
+                            + x[IX(i, j - 1, N)]
+                            + x[index]
+                            + x[index]
+                            )
+                        ) * c_reciprocal;
         });
     }
 
@@ -220,52 +241,7 @@ public:
         });
     }
 
-    // Move density / velocity within the field to the next step. (SYCL VERSION).
-    static void Advect(int b, read_write_accessor d, read_write_accessor d0, read_write_accessor u, read_write_accessor v, float dt0, std::size_t N, cl::sycl::handler& cgh) {
-        cgh.parallel_for<fluid_advect>(cl::sycl::range<2>(N - 2, N - 2), [=](cl::sycl::item<2> item) {
-            auto i{ 1 + item.get_id(0) };
-            auto j{ 1 + item.get_id(1) };
-            auto index{ IX(i, j, N) };
-            float x{ i - dt0 * u[index] };
-            float y{ j - dt0 * v[index] };
-            x = x >= N + 0.5f ? N + 0.5f : x <= 0.5f ? 0.5f : x;
-            auto i0 = (int)x;
-            auto i1 = i0 + 1;
-            y = y >= N + 0.5f ? N + 0.5f : y <= 0.5f ? 0.5f : y;
-            auto j0 = (int)y;
-            auto j1 = j0 + 1;
-            float s1{ x - i0 };
-            float s0{ 1 - s1 };
-            float t1{ y - j0 };
-            float t0{ 1 - t1 };
-            d[index] = s0 * (t0 * d0[IX(i0, j0, N)] + t1 * d0[IX(i0, j1, N)]) +
-                s1 * (t0 * d0[IX(i1, j0, N)] + t1 * d0[IX(i1, j1, N)]);
-        });
-    }
-
-    void Update() {
-        float_buffer x_b{ x.data(), x.size(), props };
-        float_buffer y_b{ y.data(), y.size(), props };
-        float_buffer px_b{ px.data(), px.size(), props };
-        float_buffer py_b{ py.data(), py.size(), props };
-        float_buffer previous_density_b{ previous_density.data(), previous_density.size(), props };
-        float_buffer density_b{ density.data(), density.size(), props };
-
-        for (std::size_t iteration{ 0 }; iteration < velocity_iterations; ++iteration) {
-            Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a) {
-                LinearSolve(1, px_a, x_a, a_velocity, c_reciprocal_velocity, size, cgh);
-            }, x_b, px_b);
-            Submit(queue, [&](cl::sycl::handler& cgh, auto y_a, auto py_a) {
-                LinearSolve(2, py_a, y_a, a_velocity, c_reciprocal_velocity, size, cgh);
-            }, y_b, py_b);
-            Submit(queue, [&](cl::sycl::handler& cgh, auto px_a) {
-                SetBoundaryConditions(1, px_a, size, cgh);
-            }, px_b);
-            Submit(queue, [&](cl::sycl::handler& cgh, auto py_a) {
-                SetBoundaryConditions(2, py_a, size, cgh);
-            }, py_b);
-        }
-
+    void Project(float_buffer& px_b, float_buffer& py_b, float_buffer& x_b, float_buffer& y_b) {
         Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
             Project1(px_a, py_a, x_a, y_a, size, cgh);
         }, x_b, px_b, y_b, py_b);
@@ -295,84 +271,62 @@ public:
         Submit(queue, [&](cl::sycl::handler& cgh, auto py_a) {
             SetBoundaryConditions(2, py_a, size, cgh);
         }, py_b);
-
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto py_a) {
-            Advect(1, x_a, px_a, px_a, py_a, dt0, size, cgh);
-        }, x_b, px_b, py_b);
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a) {
-            SetBoundaryConditions(1, x_a, size, cgh);
-        }, x_b);
-
-        Submit(queue, [&](cl::sycl::handler& cgh, auto y_a, auto px_a, auto py_a) {
-            Advect(2, y_a, py_a, px_a, py_a, dt0, size, cgh);
-        }, y_b, px_b, py_b);
-        Submit(queue, [&](cl::sycl::handler& cgh, auto y_a) {
-            SetBoundaryConditions(2, y_a, size, cgh);
-        }, y_b);
-
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto px_a, auto y_a, auto py_a) {
-            Project1(x_a, y_a, px_a, py_a, size, cgh);
-        }, x_b, px_b, y_b, py_b);
-        Submit(queue, [&](cl::sycl::handler& cgh, auto px_a) {
-            SetBoundaryConditions(0, px_a, size, cgh);
-        }, px_b);
-        Submit(queue, [&](cl::sycl::handler& cgh, auto py_a) {
-            SetBoundaryConditions(0, py_a, size, cgh);
-        }, py_b);
-
-        for (std::size_t iteration{ 0 }; iteration < velocity_iterations; ++iteration) {
-            Submit(queue, [&](cl::sycl::handler& cgh, auto px_a, auto py_a) {
-                LinearSolve(0, px_a, py_a, 1.0f, c_reciprocal_project, size, cgh);
-            }, px_b, py_b);
-            Submit(queue, [&](cl::sycl::handler& cgh, auto px_a) {
-                SetBoundaryConditions(0, px_a, size, cgh);
-            }, px_b);
-        }
-
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a, auto y_a, auto px_a) {
-            Project2(x_a, y_a, px_a, size, cgh);
-        }, x_b, y_b, px_b);
-
-        Submit(queue, [&](cl::sycl::handler& cgh, auto x_a) {
-            SetBoundaryConditions(1, x_a, size, cgh);
-        }, x_b);
-        Submit(queue, [&](cl::sycl::handler& cgh, auto y_a) {
-            SetBoundaryConditions(2, y_a, size, cgh);
-        }, y_b);
-
-        for (std::size_t iteration{ 0 }; iteration < density_iterations; ++iteration) {
-            Submit(queue, [&](cl::sycl::handler& cgh, auto previous_density_a, auto density_a) {
-                LinearSolve(0, previous_density_a, density_a, a_density, c_reciprocal_density, size, cgh);
-            }, previous_density_b, density_b);
-            Submit(queue, [&](cl::sycl::handler& cgh, auto previous_density_a) {
-                SetBoundaryConditions(0, previous_density_a, size, cgh);
-            }, previous_density_b);
-        }
-
-        Submit(queue, [&](cl::sycl::handler& cgh, auto density_a, auto previous_density_a, auto x_a, auto y_a) {
-            Advect(0, density_a, previous_density_a, x_a, y_a, dt0, size, cgh);
-        }, density_b, previous_density_b, x_b, y_b);
-        Submit(queue, [&](cl::sycl::handler& cgh, auto density_a) {
-            SetBoundaryConditions(0, density_a, size, cgh);
-        }, density_b);
     }
 
-    template <typename T, typename ...Ts>
-    static void Submit(cl::sycl::queue& queue, T lambda, Ts&... buffers) {
-        queue.submit([&](cl::sycl::handler& cgh) {
-            lambda(cgh, CreateAccessor(cgh, buffers)...);
+    // Move density / velocity within the field to the next step. (SYCL VERSION).
+    static void AdvectImpl(int b, read_write_accessor d, read_write_accessor d0, read_write_accessor u, read_write_accessor v, float dt0, std::size_t N, cl::sycl::handler& cgh) {
+        cgh.parallel_for<fluid_advect>(cl::sycl::range<2>(N - 2, N - 2), [=](cl::sycl::item<2> item) {
+            auto i{ 1 + item.get_id(0) };
+            auto j{ 1 + item.get_id(1) };
+            auto index{ IX(i, j, N) };
+            float x{ i - dt0 * u[index] };
+            float y{ j - dt0 * v[index] };
+            x = x >= N + 0.5f ? N + 0.5f : x <= 0.5f ? 0.5f : x;
+            auto i0{ (int)x };
+            auto i1{ i0 + 1 };
+            y = y >= N + 0.5f ? N + 0.5f : y <= 0.5f ? 0.5f : y;
+            auto j0{ (int)y };
+            auto j1{ j0 + 1 };
+            float s1{ x - i0 };
+            float s0{ 1 - s1 };
+            float t1{ y - j0 };
+            float t0{ 1 - t1 };
+            d[index] = s0 * (t0 * d0[IX(i0, j0, N)] + t1 * d0[IX(i0, j1, N)]) +
+                s1 * (t0 * d0[IX(i1, j0, N)] + t1 * d0[IX(i1, j1, N)]);
         });
     }
 
-    template <typename T>
-    static read_write_accessor CreateAccessor(cl::sycl::handler& cgh, T buffer) {
-        return buffer.template get_access<cl::sycl::access::mode::read_write>(cgh);
+    void Advect(int b, float_buffer& d, float_buffer& d0, float_buffer& u, float_buffer& v) {
+        Submit(queue, [&](cl::sycl::handler& cgh, auto d_a, auto d0_a, auto u_a, auto v_a) {
+            AdvectImpl(b, d_a, d0_a, u_a, v_a, dt0, size, cgh);
+        }, d, d0, u, v);
+        Submit(queue, [&](cl::sycl::handler& cgh, auto d_a) {
+            SetBoundaryConditions(b, d_a, size, cgh);
+        }, d);
     }
 
-private:
-    // Clamp value to a range.
-    template <typename T>
-    static T Clamp(T value, T low, T high) {
-        return value >= high ? high : value <= low ? low : value;
-    }
+    std::size_t size{ 0 };
+
+    std::size_t velocity_iterations{ 4 };
+    std::size_t density_iterations{ 4 };
+
+    float dt{ 0.0f };
+    float diffusion{ 0.0f };
+    float viscosity{ 0.0f };
+    float a_velocity{ 0.0f };
+    float a_density{ 0.0f };
+    float c_reciprocal_velocity{ 0.0f };
+    float c_reciprocal_density{ 0.0f };
+    float c_reciprocal_project{ 1.0f / 6.0f };
+    float dt0{ 0.0f };
+
+    std::vector<float> px;
+    std::vector<float> py;
+    std::vector<float> x;
+    std::vector<float> y;
+    std::vector<float> previous_density;
+    std::vector<float> density;
+
+    cl::sycl::property_list props{ cl::sycl::property::buffer::use_host_ptr() };
+    cl::sycl::queue queue{ cl::sycl::default_selector{}, exception_handler };
 };
