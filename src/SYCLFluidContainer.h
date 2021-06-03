@@ -1,10 +1,8 @@
 #pragma once
 
-#include <iostream> // std::cout, std::endl
 #include <vector> // std::vector
 #include <cstdlib> // std::size_t
 #include <algorithm> // std::fill
-#include <exception> // std::exception_ptr
 
 #include <CL/sycl.hpp>
 
