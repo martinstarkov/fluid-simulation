@@ -58,19 +58,9 @@ set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_RE
 add_subdirectory("vendor/protegon")
 add_protegon_to(${PROJECT_NAME})
 
-include("${CINDER_PATH}/proj/cmake/modules/cinderMakeApp.cmake")
-include_directories(SYSTEM "${CINDER_PATH}/include")
-
-ci_make_app(
-  APP_NAME ${PROJECT_NAME}
-  SOURCES "${SRC_FILES}"
-  LIBRARIES "${OpenCL_LIBRARIES}"
-  CINDER_PATH "${CINDER_PATH}")
-
 # Add SYCL.
 
 add_sycl_to_target(
   TARGET ${PROJECT_NAME}
   SOURCES "${SRC_DIR}/Application.cpp"
 )
-
